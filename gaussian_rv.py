@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as stats
+import scipy.special as sp
+import statsmodels.api as sm
+from scipy.stats import norm
 
 class GaussianGenerator:
     def __init__(self, method='box_muller'):
@@ -155,8 +158,85 @@ class GaussianGenerator:
         
         return chi_square_stat, p_value
     
+
+    def autocorrelation_test(self, samples, lags=40):
+        """
+        Perform an autocorrelation test to check for independence of the samples.
+        
+        Args:
+            samples (list): The generated Gaussian samples.
+            lags (int): Number of lags to compute the autocorrelation for.
+        
+        Returns:
+            None: It plots the autocorrelation function and prints the result.
+        """
+        # Calculate the autocorrelation
+        acf = sm.tsa.acf(samples, nlags=lags, fft=True)
+        
+        # Plot the autocorrelation function
+        plt.figure(figsize=(10, 6))
+        plt.stem(range(lags+1), acf)  # Removed 'use_line_collection' argument
+        plt.axhline(y=0, linestyle='--', color='gray')
+        plt.title('Autocorrelation Function')
+        plt.xlabel('Lag')
+        plt.ylabel('Autocorrelation')
+        plt.show()
+        
+        # Check if autocorrelations are near zero for non-zero lags
+        for lag, value in enumerate(acf[1:], start=1):
+            if abs(value) > 0.1:  # Threshold for significant autocorrelation (tune as needed)
+                print(f"Significant autocorrelation found at lag {lag}: {value:.4f}")
+                return False
+        
+        print("No significant autocorrelation found. The samples appear to be independent.")
+        return True
+    
+    def runs_test(self, samples):
+        """
+        Perform a runs test to check for independence of the samples.
+        
+        Args:
+            samples (list): The generated Gaussian samples.
+        
+        Returns:
+            float: z-statistic for the runs test.
+            float: p-value for the test.
+        """
+        # Convert to +1 (for increasing) and -1 (for decreasing) values
+        runs = np.diff(samples) > 0
+        runs = runs.astype(int)
+        
+        # Count the number of runs
+        run_changes = np.diff(runs)
+        run_count = np.sum(run_changes != 0) + 1  # Number of runs
+        
+        # Calculate expected number of runs and standard deviation
+        n1 = np.sum(runs)  # Number of increases
+        n2 = len(runs) - n1  # Number of decreases
+        total_runs = n1 + n2
+        expected_runs = (2 * n1 * n2) / total_runs + 1
+        std_runs = np.sqrt((2 * n1 * n2 * (2 * n1 * n2 - total_runs)) / (total_runs**2 * (total_runs - 1)))
+        
+        # Calculate z-statistic
+        z_stat = (run_count - expected_runs) / std_runs
+        p_value = 2 * (1 - norm.cdf(abs(z_stat)))  # Two-tailed p-value
+        
+        # Output the results
+        print(f"Runs Count: {run_count}")
+        print(f"Expected Runs: {expected_runs:.4f}")
+        print(f"z-statistic: {z_stat:.4f}")
+        print(f"p-value: {p_value:.4f}")
+        
+        if p_value > 0.05:
+            print("The runs test indicates the samples are independent (p > 0.05).")
+        else:
+            print("The runs test suggests the samples may not be independent (p <= 0.05).")
+        
+        return z_stat, p_value
+    
     def test_independence(self, samples):
-        """Test the independence of samples using autocorrelation and a runs test."""
+        """Test the independence of samples using autocorrelation and a runs test.
+            in this version it uses nupmy functions instead of statsmodels, corrcoef is being used"""
         lag = 1
         autocorr = np.corrcoef(samples[:-lag], samples[lag:])[0, 1]
         print(f"Autocorrelation at lag {lag}: {autocorr:.4f}")
@@ -171,22 +251,3 @@ class GaussianGenerator:
             print("The samples pass the runs test (p > 0.05), indicating they are likely random.")
         else:
             print("The samples fail the runs test (p <= 0.05), indicating they may not be random.")
-
-# Example Usage
-# Create an instance of the GaussianGenerator class for the Box-Muller method
-gen = GaussianGenerator(method='box_muller')
-
-# Generate 10000 samples
-samples = gen.generate(num_samples=10000)
-
-# Plot the generated samples
-print("Plotting Samples...")
-gen.plot_samples(samples)
-
-# Test the distribution
-print("Testing Distribution...")
-gen.test_distribution(samples)
-
-# Test the independence
-print("\nTesting Independence...")
-gen.test_independence(samples)
