@@ -4,7 +4,6 @@ import heapq
 import numpy as np
 import matplotlib.pyplot as plt
 
-
 class Client:
     def __init__(self, arrival_time, service_time, client_type="Regular"):
         self.client_type = client_type
