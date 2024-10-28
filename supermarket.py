@@ -386,17 +386,7 @@ class SupermarketSimulator:
         print(f"Time {time:.2f}: Client {client_id} exited the supermarket. "
               f"Total time: {total_time:.2f}")
     
-    def update_hourly_statistics(self, time: float, event_type: str, total_time: float = None):
-        """Update hourly statistics with proper averaging."""
-        hour = int(time // 60)
-        stats = self.metrics['hourly_statistics'][hour]
-        
-        if event_type == 'arrival':
-            stats['arrivals'] += 1
-        elif event_type == 'completion' and total_time is not None:
-            stats['completions'] += 1
-            stats['total_time'] += total_time
-            stats['avg_time'] = stats['total_time'] / stats['completions']
+    
 
     def run(self):
         """Run the supermarket simulation."""

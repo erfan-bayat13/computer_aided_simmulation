@@ -60,3 +60,15 @@ FIFO queue
 (can the arrival_rate and service_rate be dynamic and change with time? ----> arrival_rate a function of time, non homoginous possion process)
 (some clients can return to other parts when the cash lines are too crowded)
 (more workers at peak hours)
+
+----------------------------
+todo
+add the confidence interval to your code
+add different customers to your system
+check your logic on a high level *update seems okay for now*
+check the FES *update: for now makes sense needs to be checked further for sure*
+check structures *update: all good just appending to the set needs to be checked*
+add a item structure to make the cash register based on the time spent on that
+check the warmup  transit and why you have a drop at the end
+client gen should have differnt types that change the service time and makes it more real
+store the outputs in a file for the second part of your analysis to not do the simulations again
