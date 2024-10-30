@@ -4,7 +4,7 @@ import heapq
 class SupermarketClient:
     """A client in a supermarket simulation."""
     
-    def __init__(self, arrival_time, client_type="none", butchery_time=0, fresh_food_time=0, other_time=0):
+    def __init__(self, arrival_time, client_type="none", butchery_time=0, fresh_food_time=0, other_time=0,service_speed="normal"):
         """
         Initialize a supermarket client.
         
@@ -14,17 +14,29 @@ class SupermarketClient:
             butchery_time (float): Service time needed at butchery
             fresh_food_time (float): Service time needed at fresh food section
             other_time (float): Time spent in other parts of supermarket
+            service_speed (str): Speed of service ("normal" or "slow")
         """
         # Basic attributes
         self.arrival_time = arrival_time
         self.shopping_type = client_type
+        self.service_speed = service_speed
+        #self.item_bought = 0
         
         # Service time tracking
-        self.service_times = {
+        base_service_times = {
             "butchery": butchery_time,
             "fresh_food": fresh_food_time,
             "other": other_time
         }
+
+        cashier_time = self.calculate_cashier_time(base_service_times)
+
+        # Complete service times including cashier
+        self.service_times = {
+            **base_service_times,
+            "cashier": cashier_time
+        }
+
         self.remaining_times = self.service_times.copy()
         
         # Location tracking
@@ -59,12 +71,23 @@ class SupermarketClient:
                 "fresh_food": 4,
                 "other": 15
             }
-        
+        # Determine if customer is slow (e.g., elderly, needs assistance)
+        # 15% chance of being a slow customer
+        service_speed = random.choices(["normal", "slow"], weights=[0.85, 0.15])[0]
+
+
         # Generate client type with weighted probabilities
-        client_type = random.choices(
-            ["fresh", "butch", "both", "none"],
-            weights=[0.3, 0.3, 0.2, 0.2]
-        )[0]
+        # Adjust probabilities for slow customers - they're more likely to need assistance
+        if service_speed == "normal":
+            client_type = random.choices(
+                ["fresh", "butch", "both", "none"],
+                weights=[0.3, 0.3, 0.2, 0.2]
+            )[0]
+        else:
+            client_type = random.choices(
+                ["fresh", "butch", "both", "none"],
+                weights=[0.35, 0.35, 0.20, 0.10]
+            )[0]
         
         # Generate service times based on client type
         butchery_time = random.expovariate(1/mean_service_times["butchery"]) if client_type in ["butch", "both"] else 0
@@ -76,8 +99,60 @@ class SupermarketClient:
             client_type=client_type,
             butchery_time=butchery_time,
             fresh_food_time=fresh_food_time,
-            other_time=other_time
+            other_time=other_time,
+            service_speed=service_speed
         )
+    
+    def calculate_cashier_time(self, service_times):
+        """
+        Calculate cashier service time based on other service times.
+        
+        The formula considers:
+        1. Base time for scanning items (proportional to other shopping times)
+        2. Additional time for specialized items (butchery/fresh food)
+        3. Random variation to simulate different packing speeds, payment methods, etc.
+        
+        Args:
+            service_times (dict): Dictionary of service times for other sections
+            
+        Returns:
+            float: Calculated cashier service time
+        """
+        # Calculate base time proportional to total shopping time
+        total_shopping_time = sum(service_times.values())
+        base_time = total_shopping_time * 0.2  # Base scanning time is 20% of shopping time
+        
+        # Add extra time for specialized items
+        specialized_time = 0
+        if service_times["butchery"] > 0:
+            specialized_time += service_times["butchery"] * 0.15  # 15% extra for butchery items
+        if service_times["fresh_food"] > 0:
+            specialized_time += service_times["fresh_food"] * 0.15  # 15% extra for fresh food items
+            
+        # Add random variation (±30% of base time)
+        variation = random.uniform(0.7, 1.3)
+        
+        # Combine all components with a minimum time
+        cashier_time = max(1.0, (base_time + specialized_time) * variation)
+        
+        return cashier_time
+    
+    def get_estimated_items(self):
+        """
+        Estimate the number of items based on service times.
+        Useful for analysis and validation.
+        
+        Returns:
+            dict: Estimated items per section
+        """
+        # Rough estimation of items based on service times
+        items = {
+            "butchery": int(self.service_times["butchery"] / 2) if self.service_times["butchery"] > 0 else 0,
+            "fresh_food": int(self.service_times["fresh_food"] / 1.5) if self.service_times["fresh_food"] > 0 else 0,
+            "other": int(self.service_times["other"] / 1) if self.service_times["other"] > 0 else 0
+        }
+        items["total"] = sum(items.values())
+        return items
     
     @staticmethod
     def arrival(time, FES, waiting_queues, arrival_rate, metrics, supermarket):
@@ -184,6 +259,12 @@ class SupermarketClient:
                 return "cashier"
         
         return "exit"
+    
+    def get_service_time(self, section: str) -> float:
+        """
+        Get service time for a section with proper key handling.
+        """
+        return self.remaining_times[section] if section in self.remaining_times else 0
     
     def enter_section(self, time, section):
         """Record entry into a section."""

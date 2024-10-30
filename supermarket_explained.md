@@ -1,4 +1,4 @@
-# supermarket class
+# supermarket client
 has arrival time, type, time for each sector
 #### check the location tracking if its working
 
@@ -11,7 +11,7 @@ todo --> number of items to be added
 ## functions for client class
 ### generate client
 generated random clients
-todo --->  make it better
+todo --->  make it better ---> *update added different service_time*
 
 ** returns ** SupermarketClient 
 

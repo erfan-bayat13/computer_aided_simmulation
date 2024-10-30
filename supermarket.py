@@ -174,13 +174,15 @@ class SupermarketSimulator:
             section_metrics['current_customers'] += 1
             section_metrics['waiting_times'].append(0)  # No waiting time
 
-            # Schedule departure
-            service_time = random.expovariate(self.service_rates[section])
+            # Use the client's remaining time for the section
+            service_time = client.remaining_times["other"]
             departure_time = time + service_time
+            
+            # Schedule departure with the remaining time
             heapq.heappush(self.FES, (departure_time, "section_departure", 
                                     (server_id, section, client_id)))
+            print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) started service in other section")
 
-            print(f"Time {time:.2f}: Client {client_id} started service in other section")
         else:
             # Regular handling for other sections
             server_index = self.get_available_server(section)
@@ -194,14 +196,15 @@ class SupermarketSimulator:
                 section_metrics['total_arrivals'] += 1
                 section_metrics['current_customers'] += 1
                 
-                # Schedule departure
-                service_time = random.expovariate(self.service_rates[section])
+                # Use the client's remaining time for the section
+                service_time = client.remaining_times[section]
                 departure_time = time + service_time
+                
                 heapq.heappush(self.FES, (departure_time, "section_departure", 
                                         (server_index, section, client_id)))
                 
                 section_metrics['waiting_times'].append(0)
-                print(f"Time {time:.2f}: Client {client_id} started service in {section}")
+                print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) started service in {section}")
             elif not section_data["queue"].full():
                 # Join queue
                 section_data["queue"].put(client_id)
@@ -212,11 +215,12 @@ class SupermarketSimulator:
                 section_metrics['current_customers'] += 1
                 section_metrics['queue_lengths'].append(section_data["queue"].qsize())
                 
-                print(f"Time {time:.2f}: Client {client_id} queued in {section}")
+                print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) queued in {section}")
             else:
                 # Section is full
                 section_metrics['rejected_customers'] += 1
-                print(f"Time {time:.2f}: Client {client_id} rejected from {section} (full)")
+                print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) rejected from {section} (full)")
+
 
                 
     def find_alternative_section(self, client, original_section):
@@ -226,16 +230,9 @@ class SupermarketSimulator:
         return None
 
     def handle_section_departure(self, time: float, event_data: tuple):
-        """
-        Handle client departure from a section, with special handling for 'other' section.
-        
-        Args:
-            time (float): Current simulation time
-            event_data (tuple): (server_index, section, client_id)
-        """
+        """Handle client departure from a section with proper remaining time updates."""
         server_index, section, client_id = event_data
         
-        # Validate client exists
         client = self.active_clients.get(client_id)
         if not client:
             print(f"Warning: Client {client_id} not found during departure from {section}")
@@ -244,33 +241,36 @@ class SupermarketSimulator:
         section_data = self.sections[section]
         section_metrics = self.metrics['section_metrics'][section]
 
+        # Calculate the actual service time
+        service_start_time = client.section_metrics[section]["service_start"]
+        actual_service_time = time - service_start_time
+        
+        # Update remaining time for the section to 0 since service is complete
+        client.remaining_times[section] = 0
+
         if section == "other":
             # Special handling for other section with infinite servers
             if server_index < len(section_data["servers"]):
                 section_data["servers"][server_index] = None
-                # Remove empty slots at the end of the servers list
                 while (len(section_data["servers"]) > 0 and 
                     section_data["servers"][-1] is None):
                     section_data["servers"].pop()
             
             # Record service completion
             client.exit_section(time, section)
-            service_time = time - client.section_metrics[section]["entry_time"]
-            section_metrics['service_times'].append(service_time)
+            section_metrics['service_times'].append(actual_service_time)
             section_metrics['completions'] += 1
             section_metrics['current_customers'] -= 1
             
         else:
             # Regular section handling
-            # Validate server state
             if server_index >= len(section_data["servers"]) or section_data["servers"][server_index] != client_id:
                 print(f"Warning: Server state mismatch during departure. Section: {section}, Server: {server_index}")
                 return
             
             # Record service completion
             client.exit_section(time, section)
-            service_time = time - client.section_metrics[section]["entry_time"]
-            section_metrics['service_times'].append(service_time)
+            section_metrics['service_times'].append(actual_service_time)
             section_metrics['completions'] += 1
             section_metrics['current_customers'] -= 1
             
@@ -284,25 +284,25 @@ class SupermarketSimulator:
                     next_client = self.active_clients.get(next_client_id)
                     
                     if next_client:
-                        # Assign new client to freed server
                         section_data["servers"][server_index] = next_client_id
-                        next_client.enter_section(time, section)
+                        next_client.section_metrics[section]["service_start"] = time
                         
-                        # Calculate waiting time
-                        waiting_time = time - next_client.section_metrics[section]["entry_time"]
-                        section_metrics['waiting_times'].append(waiting_time)
-                        
-                        # Schedule departure
-                        service_time = random.expovariate(self.service_rates[section])
+                        # Use the client's remaining time for the section
+                        service_time = next_client.remaining_times[section]
                         departure_time = time + service_time
+                        
                         heapq.heappush(self.FES, (departure_time, "section_departure",
                                                 (server_index, section, next_client_id)))
                         
-                        print(f"Time {time:.2f}: Client {next_client_id} started service in {section}")
+                        # Calculate and record waiting time
+                        waiting_time = time - next_client.section_metrics[section]["entry_time"]
+                        section_metrics['waiting_times'].append(waiting_time)
+                        
+                        print(f"Time {time:.2f}: Client {next_client_id} ({next_client.shopping_type}, {next_client.service_speed}) started service in {section}")
                 except Exception as e:
                     print(f"Error processing next client from queue in {section}: {str(e)}")
         
-        # Update queue length metrics if applicable
+        # Update queue length metrics
         if section != "other" and hasattr(section_data["queue"], "qsize"):
             section_metrics['queue_lengths'].append(section_data["queue"].qsize())
         
@@ -316,9 +316,8 @@ class SupermarketSimulator:
         if next_section == "exit":
             self.handle_customer_exit(time, client_id)
         else:
-            # Schedule entry to next section
             heapq.heappush(self.FES, (time, "section_entry", (client_id, next_section)))
-            print(f"Time {time:.2f}: Client {client_id} moving from {section} to {next_section}")
+            print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) moving from {section} to {next_section}")
         
         # Update server utilization metrics
         if section != "other":
@@ -326,7 +325,6 @@ class SupermarketSimulator:
             utilization = sum(1 for server in servers if server is not None) / len(servers)
             section_metrics['server_utilization'].append(utilization)
         else:
-            # For "other" section, utilization is meaningless due to infinite servers
             section_metrics['server_utilization'].append(1.0)
                 
     def check_customer_ready_for_checkout(self, client):
@@ -386,7 +384,17 @@ class SupermarketSimulator:
         print(f"Time {time:.2f}: Client {client_id} exited the supermarket. "
               f"Total time: {total_time:.2f}")
     
-    
+    def update_hourly_statistics(self, time: float, event_type: str, total_time: float = None):
+        """Update hourly statistics with proper averaging."""
+        hour = int(time // 60)
+        stats = self.metrics['hourly_statistics'][hour]
+        
+        if event_type == 'arrival':
+            stats['arrivals'] += 1
+        elif event_type == 'completion' and total_time is not None:
+            stats['completions'] += 1
+            stats['total_time'] += total_time
+            stats['avg_time'] = stats['total_time'] / stats['completions']
 
     def run(self):
         """Run the supermarket simulation."""
