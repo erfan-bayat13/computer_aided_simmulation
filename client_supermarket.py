@@ -55,6 +55,16 @@ class SupermarketClient:
             }
             for section in ["butchery", "fresh_food", "other", "cashier"]
         }
+
+            # Add patience attributes
+        self.retry_attempts = {
+            "butchery": 0,
+            "fresh_food": 0,
+            "other": 0,
+            "cashier": 0
+        }
+        self.max_retries = 3  # Default patience threshold
+        self.abandoned = False # Flag for abandoned clients
     
     @staticmethod
     def generate_random_client(arrival_time, mean_service_times=None):
@@ -290,6 +300,16 @@ class SupermarketClient:
             if section in self.remaining_times:
                 self.remaining_times[section] = max(0, self.remaining_times[section] - service_time)
     
+    def increment_retry_attempt(self, section):
+        """Increment retry attempts for a specific section."""
+        self.retry_attempts[section] = self.retry_attempts.get(section, 0) + 1
+        return self.retry_attempts[section]
+
+    def has_exceeded_patience(self, section):
+        """Check if customer has exceeded patience threshold for a section."""
+        return self.retry_attempts.get(section, 0) >= self.max_retries
+
+
     def get_total_shopping_time(self):
         """Calculate total time spent shopping."""
         return sum(metrics["total_time"] for metrics in self.section_metrics.values())

@@ -217,12 +217,38 @@ class SupermarketSimulator:
                 
                 print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) queued in {section}")
             else:
-                # Section is full
-                section_metrics['rejected_customers'] += 1
-                print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) rejected from {section} (full)")
+                # Section is full - handle rejection with patience
+                if section == "cashier":
+                    # Increment retry attempt
+                    retry_attempt = client.increment_retry_attempt(section)
+                    
+                    if client.has_exceeded_patience(section):
+                        # Customer abandons purchase
+                        print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) "
+                            f"abandoned purchase after {retry_attempt} attempts")
+                        self.handle_customer_abandonment(time, client_id)
+                    else:
+                        # Schedule retry attempt
+                        retry_delay = random.uniform(2.0, 5.0)
+                        print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) "
+                            f"will retry {section} in {retry_delay:.2f} time units (attempt {retry_attempt})")
+                        heapq.heappush(self.FES, (time + retry_delay, "section_entry", 
+                                                (client_id, section)))
+                else:
+                    # For non-cashier sections, try alternative section or reject
+                    alternative_section = self.find_alternative_section(client, section)
+                    if alternative_section:
+                        print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) "
+                            f"redirected to {alternative_section} from {section}")
+                        heapq.heappush(self.FES, (time, "section_entry", 
+                                                (client_id, alternative_section)))
+                    else:
+                        # Final rejection
+                        section_metrics['rejected_customers'] += 1
+                        print(f"Time {time:.2f}: Client {client_id} ({client.shopping_type}, {client.service_speed}) "
+                            f"rejected from {section} (full)")
 
-
-                
+                    
     def find_alternative_section(self, client, original_section):
         """Find alternative section when original section is full."""
         if original_section in ["butchery", "fresh_food"] and client.remaining_times["other"] > 0:
@@ -341,6 +367,49 @@ class SupermarketSimulator:
         return (client.remaining_times["butchery"] <= 0 and 
                 client.remaining_times["fresh_food"] <= 0 and 
                 client.remaining_times["other"] <= 0)
+    
+    # In SupermarketSimulator class, add these methods:
+    def handle_cashier_rejection_with_patience(self, time: float, client_id: int):
+        """Retry mechanism that considers customer patience."""
+        client = self.active_clients.get(client_id)
+        if not client:
+            return
+    
+        # Increment retry attempt
+        retry_attempt = client.increment_retry_attempt("cashier")
+
+        # Check if customer has exceeded patience threshold
+        if client.has_exceeded_patience("cashier"):
+            # Customer leaves without completing purchase
+            print(f"Time {time:.2f}: Client {client_id} left without purchasing (exceeded retry limit)")
+            self.handle_customer_abandonment(time, client_id)
+            return
+        
+        # Customer will try again after some time
+        retry_delay = random.uniform(2.0, 5.0)  # Random delay between 2-5 time units
+        print(f"Time {time:.2f}: Client {client_id} will retry cashier in {retry_delay:.2f} time units (attempt {retry_attempt})")
+        heapq.heappush(self.FES, (time + retry_delay, "section_entry", (client_id, "cashier")))
+
+    def handle_customer_abandonment(self, time: float, client_id: int):
+        """Handle customer abandoning their purchase."""
+        client = self.active_clients.get(client_id)
+        if not client:
+            return
+        
+        client.abandoned = True
+        
+        # Update metrics
+        self.metrics['rejected_customers'] += 1
+        self.metrics['active_customers'] -= 1
+        
+        # Record abandonment in section metrics
+        section_metrics = self.metrics['section_metrics']["cashier"]
+        section_metrics['rejected_customers'] += 1
+        
+        # Remove client from active clients
+        self.active_clients.pop(client_id, None)
+        
+        print(f"Time {time:.2f}: Client {client_id} abandoned purchase and left the supermarket")
 
     def handle_customer_exit(self, time: float, client_id: int):
         """Handle customer leaving the supermarket."""
