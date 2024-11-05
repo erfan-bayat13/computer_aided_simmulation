@@ -1,100 +1,191 @@
-# supermarket client
-has arrival time, type, time for each sector
-#### check the location tracking if its working
+# Comprehensive Supermarket Simulation System Explanation
 
-current location 
-sections visited 
-ready for check out 
-has checked out
-todo --> number of items to be added
+## 1. System Overview
 
-## functions for client class
-### generate client
-generated random clients
-todo --->  make it better ---> *update added different service_time*
+The supermarket simulation models a real-world supermarket with:
+- Specialized service sections (Butchery, Fresh Food)
+- General shopping area (Other Parts)
+- Checkout area (Cashiers)
+- Different types of customers with varying shopping needs and behaviors
 
-** returns ** SupermarketClient 
+## 2. Core Components
 
-### arrival function (for now not being used because of load management)
+### 2.1 Client Types and Behavior
+```
+Customers are categorized by:
+- Shopping Type:
+  - Fresh Food Only (30% probability for normal, 35% for slow customers)
+  - Butchery Only (30% probability for normal, 35% for slow customers)
+  - Both Services (20% probability)
+  - Regular Shopping (20% probability for normal, 10% for slow customers)
+- Service Speed:
+  - Normal (85% probability)
+  - Slow (15% probability) - e.g., elderly or customers needing assistance
 
-#### todo check if this arrival and the other one in the supermarket class work the same
+Each client has:
+- Arrival time
+- Service times for each required section
+- Shopping path tracking
+- Service speed modifier
+- Patience threshold for queues
+- Retry attempts tracking
+```
 
-### decide next section
-simple decisision making algo for seeing the next section to be selected 
-todo -> check if the set in the innit is being added to properly 
+### 2.2 Service Times and Processing
+```python
+Service times are calculated with:
+- Base times per section:
+  - Butchery: Mean 5 time units
+  - Fresh Food: Mean 4 time units
+  - Other Parts: Mean 15 time units
+  - Cashier: Dynamically calculated based on:
+    - 20% of total shopping time for base scanning
+    - 15% extra time for specialized items (butchery/fresh food)
+    - ±30% random variation for different packing/payment speeds
+```
 
-### enter and exit section
-Record entry/exit into a section.
+### 2.3 Queue Management
+- Each service section (except Other Parts) has:
+  - Limited number of servers
+  - Queue with maximum capacity
+  - FCFS (First Come First Serve) policy
+- Other Parts section has:
+  - Infinite server model
+  - No queue (immediate service)
+- Queue Thresholds:
+  - Maximum 5 customers in specialized section queues
+  - Alternative paths when queues are full
 
-both just record the metrics and change the flag for checked out
+## 3. Customer Journey Logic
 
-### get_total_shopping_time
-sum of all total time
+### 3.1 Section Selection Process
+```python
+def decide_next_section(self, waiting_queues):
+    # Priority order:
+    1. Required specialized services (if queues aren't too long)
+    2. Other Parts as temporary diversion
+    3. Return to specialized services when queues are shorter
+    4. Proceed to checkout when all shopping is complete
+```
 
-### journey summary
-Get summary of client's shopping journey.
+### 3.2 Customer Patience System
+```
+Patience handling includes:
+- Maximum retry attempts (default: 3)
+- Random retry delays (2-5 time units)
+- Alternative section routing
+- Purchase abandonment logic
+```
 
----> todo the journey summary for all the clients should be added in a csv file for after simmulation analysis
+## 4. Advanced Features
 
-# supermarket class
-init --> num servers for each section , queue capacity, rates, time, seed
+### 4.1 Dynamic Service Times
+- Service times vary based on:
+  - Customer type
+  - Service speed category
+  - Section requirements
+  - Previous service history
 
-active clients
+### 4.2 Customer Flow Control
+```python
+Flow control mechanisms:
+- Queue length monitoring
+- Alternative path routing
+- Service time adjustments
+- Patience-based decision making
+```
 
-todo --> make the service rates vary adn more relastic 
+### 4.3 Metrics Collection
+```python
+Comprehensive metrics tracking:
+- Overall:
+  - Total customers
+  - Completed purchases
+  - Abandoned purchases
+  - Average time in system
+- Per Section:
+  - Utilization
+  - Queue lengths
+  - Service times
+  - Waiting times
+  - Rejection rates
+- Customer Types:
+  - Distribution
+  - Service patterns
+  - Completion rates
+```
 
-section are queue class *other is a infinte server queue*
+## 5. Implementation Details
 
-##### FES *chose heap for my reasons* is initialised here and pushed the first heapq.heappush(self.FES, (0, "arrival", None))
+### 5.1 Core Event Types
+```python
+Event handling for:
+- Customer arrival
+- Section entry
+- Service start
+- Service completion
+- Queue updates
+- Customer departure
+```
 
+### 5.2 Queue Management System
+```python
+class SectionQueue:
+    - Capacity limits
+    - Current length tracking
+    - Waiting time statistics
+    - Rejection handling
+    - Alternative routing
+```
 
-## functions
-### init metrics
-#### mimin func called hour stats
+### 5.3 Service Section Management
+```python
+class ServiceSection:
+    - Server allocation
+    - Queue management
+    - Service time tracking
+    - Utilization metrics
+```
 
-### update hourly stats
-todo --> see if you can make this be in a 24 hour window in every case 
+## 6. Statistical Analysis
 
-Update hourly statistics with proper initialization
-based on the event_type given the stats are added
+### 6.1 Key Performance Indicators
+- System-wide metrics:
+  - Average customer throughput
+  - System utilization
+  - Service completion rate
+  - Customer satisfaction indicators
 
-### get availabe server
-finds free server
-### ger queue lenght
-current queue lengths for all sections
+### 6.2 Section-Specific Analysis
+- Per-section metrics:
+  - Server utilization
+  - Queue dynamics
+  - Service efficiency
+  - Customer flow patterns
 
-### handle arrival
-*this function is being used as the main arrivla function as is now*
-this is inly for new customers
-##### FES is being called here 
-and used the genearte client fucntion to create new instances of customers
-the we are using the lenght getters to assigne new section
-##### FES is being handeld here as well
+### 6.3 Customer Behavior Analysis
+- Shopping patterns:
+  - Service type distribution
+  - Time spent per section
+  - Queue tolerance
+  - Abandonment patterns
 
-### section entry
-handle section entry with proper server and queue management.
-##### FES is being  called here
+## 7. Visualization and Reporting
 
-todo ---> handle the proper service time handeling 
+### 7.1  Monitoring
+```python
+def plot_metrics():
+    - Queue lengths over time
+    - Server utilization
+    - Customer flow rates
+    - Service completion rates
+```
 
-### find_alternative_section
-Find alternative section when original section is full
-pass the client to other so they can be there until the queue is full
-
-### handle section departure 
-todo --> FES is not being handled in the other section
-
-### check_customer_ready_for_checkout
-flag handeling
-### handle_customer_exit
-handeling metrics and removing form the env
-and updating the journey 
-
-## run function
-todo --->  check the time handleing
-get time type data from FES
-check type and pass to the right function
-
-arrival
-section entry
-section departure then plotting the metrics
+### 7.2 Summary Statistics
+```python
+def print_summary():
+    - Overall performance metrics
+    - Section-specific statistics
+    - Customer type analysis
+    - System efficiency indicators
+```

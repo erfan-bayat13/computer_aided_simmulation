@@ -6,7 +6,7 @@ import statsmodels.api as sm
 from scipy.stats import norm
 
 class GaussianGenerator:
-    def __init__(self, method='box_muller'):
+    def __init__(self, method='box_muller', seed=None):
         """
         Initialize the GaussianGenerator class with the chosen method for generating Gaussian random variables.
         
@@ -15,7 +15,9 @@ class GaussianGenerator:
                           'box_muller', 'clt', 'newton'.
         """
         self.method = method
-    
+        self.seed = seed
+        if seed is not None:
+            np.random.seed(seed)
     def generate(self, num_samples=10000):
         """
         Generate a specified number of Gaussian random variables using the chosen method.
