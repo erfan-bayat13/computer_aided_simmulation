@@ -1,15 +1,23 @@
+from dataclasses import dataclass
 import random
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 
+@dataclass
+class Location:
+    x:int
+    y:int
+
 class uber_client:
     '''
     A client in the uber simulation 
     '''
-    def __init__(self,arrival_time, current_location, destination, behavour_type= "Normal"):
+    def __init__(self,arrival_time, current_location:Location, destination:Location, 
+                 behavour_type= "Normal",max_wait_time:float = 15.0
+                 ):
         ''' 
-        Initialize a uber client.
+        Initialize a uber client(rider).
 
         args:
         todo
@@ -18,8 +26,81 @@ class uber_client:
         self.arrival_time = arrival_time
         self.current_location = current_location
         self.destination = destination
-        self.behavour_type = behavour_type      
+        self.behavour_type = behavour_type  
+        self.max_wait_time = max_wait_time
 
+        #status tracking
+        self.status = "Waiting" # Waiting, Matched, InRide, Completed, Cancelled
+        self.assigened_client = None
+        self.pickup_time = None
+        self.completion_time = None
+
+        # statistics
+        self.waiting_time = 0
+        self.ride_time = 0
+        self.total_cost = 0
+
+    @classmethod
+    def generate_client(cls,city_map,current_time, behavior_dist = None):
+        '''
+        Generate a new client
+
+        args:
+            city_map
+            arrival_time
+            behavior_dist
+        '''
+
+        if behavior_dist == None:
+            behavior_dist = {
+                "nomral":0.7,
+                "premium":0.2,
+                "patient":0.1
+            }
+        
+        grid_size = (city_map.width, city_map.height)
+        start_loc = Location(
+            x = random.randint(0,grid_size[0]-1),
+            y = random.randint(0,grid_size[1]-1)
+        )
+        # ensure they are not the same pos
+        while True:
+            des_loc = Location(
+            x = random.randint(0,grid_size[0]-1),
+            y = random.randint(0,grid_size[1]-1)
+        )
+            if (des_loc.x != start_loc.x) or (des_loc.y != start_loc.y):
+                break
+        behavior = random.choices(
+                    list(behavior_dist.keys()),
+                    weights=list(behavior_dist.values())
+                )[0]
+        
+        return cls(
+            arrival_time = current_time,
+            current_location = start_loc,
+            destination = des_loc,
+            behavour_type = behavior
+        )
+    
+    def update_status(self, new_status: str, current_time: float):
+        '''
+        Update client status and calculate relevant times
+        
+        Args:
+            new_status: New status to set
+            current_time: Current simulation time
+        '''
+        self.status = new_status
+        
+        if new_status == "Matched":
+            self.waiting_time = current_time - self.arrival_time
+        elif new_status == "InRide":
+            self.pickup_time = current_time
+        elif new_status == "Completed":
+            self.completion_time = current_time
+            if self.pickup_time:
+                self.ride_time = current_time - self.pickup_time
 
 class uber_driver:
     def __init__(self, current_location, behavour_type= "Normal", status = "Idle"):
@@ -181,3 +262,10 @@ def visualize_traffic_map(city):
     plt.xlabel('X Coordinate')
     plt.ylabel('Y Coordinate')
     plt.show()
+
+
+city_map = city_map((10, 10), num_hotspots=3)
+current_time = 0.0
+
+# Generate a new client
+new_client = uber_client.generate_client(city_map, current_time)
