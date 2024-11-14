@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import random
 from collections import defaultdict
+from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -53,9 +54,9 @@ class uber_client:
 
         if behavior_dist == None:
             behavior_dist = {
-                "nomral":0.7,
-                "premium":0.2,
-                "patient":0.1
+                "Normal":0.7,
+                "Premium":0.2,
+                "Patient":0.1
             }
         
         grid_size = (city_map.width, city_map.height)
@@ -102,8 +103,29 @@ class uber_client:
             if self.pickup_time:
                 self.ride_time = current_time - self.pickup_time
 
+    def is_willing_to_wait(self,current_time):
+        '''
+        Check if client is still willing to wait based on their max wait time.
+        
+        Args:
+            current_time (float): Current simulation time
+        
+        Returns:
+            bool: True if client is still willing to wait, False otherwise
+
+        '''
+
+        current_wait  = current_time - self.arrival_time
+
+        if self.behavour_type == "Patient":
+            return current_wait <= (self.max_wait_time *1.3)
+        elif self.behavour_type == "Premium":
+            return current_wait <= (self.max_wait_time *0.7)
+        
+        current_time <= self.max_wait_time
+
 class uber_driver:
-    def __init__(self, current_location, behavour_type= "Normal", status = "Idle"):
+    def __init__(self,current_location, ride_type= "UberX", status = "Idle"):
         '''
         Initialize a uber driver
 
@@ -112,24 +134,74 @@ class uber_driver:
         '''
         # basic attributes
         self.current_location = current_location
-        self.behavour_type = behavour_type
+        self.behavour_type = ride_type
         self.status = status
 
         # calculated attributes
         self.service_time = 0
         self.waiting_time = 0
+    
+    @classmethod
+    def generate_driver(cls,city_map, ride_type_dist = None):
+        '''
+        Generate a new driver
+
+        args:
+            city_map
+            arrival_time
+            behavior_dist
+        '''
+
+        if ride_type_dist == None:
+            ride_type_dist = {
+                "UberX":0.7,
+                "UberGreen":0.2,
+                "UberLux":0.1
+            }
+        
+        grid_size = (city_map.width, city_map.height)
+        start_loc = Location(
+            x = random.randint(0,grid_size[0]-1),
+            y = random.randint(0,grid_size[1]-1)
+        )
+        
+        ride_type = random.choices(
+                    list(ride_type_dist.keys()),
+                    weights=list(ride_type_dist.values())
+                )[0]
+        
+        return cls(
+            current_location = start_loc,
+            ride_type = ride_type,
+            status = "Idle"
+        )
 
 class uber_network:
-    def __init__(self, city_map, traffic_generator):
+    def __init__(self, city_map, client_arrival_rate, driver_arrival_rate, 
+                 simulation_time: int = 1000,
+                 pre_simulation_driver: int = 20
+                 ,seed: Optional[int] = None):
         '''
         Initialize the uber network
 
         args:
         todo
         '''
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+        
+        #basic attributes
         self.city_map = city_map
-        self.traffic_generator = traffic_generator
-
+        self.client_arrival_rate = client_arrival_rate
+        self.driver_arrival_rate = driver_arrival_rate
+        
+        #init queus and tracking
+        self.waiting_clients = [] # Queue for waiting clients
+        self.available_drivers = [] # List of idle drivers
+        self.active_drivers = {}  # Dictionary to track ongoing rides
+        self.complete_rides = [] # List to track completed rides
+        
 class city_map:
     def __init__(self, grid_size, num_hotspots=3):
         """
@@ -269,3 +341,5 @@ current_time = 0.0
 
 # Generate a new client
 new_client = uber_client.generate_client(city_map, current_time)
+
+new_driver = uber_driver.generate_driver(city_map)
