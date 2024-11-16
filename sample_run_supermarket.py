@@ -105,13 +105,13 @@ def test_supermarket(simulation_time=1000, seed=42):
     
     return results
 
-'''
+
 # Example usage for running a single simulation arguments can be adjusted in the function:
 if __name__ == "__main__":
     print("Test 1: Base scenario")
     print("====================")
     results = test_supermarket(simulation_time=1000, seed=42)
-'''
+
 
 '''
 # example usage for running multiple replications and calculating confidence intervals
