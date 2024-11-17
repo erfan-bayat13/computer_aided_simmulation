@@ -7,450 +7,10 @@ from typing import Any, Dict, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import queue
-
-@dataclass
-class Location:
-    x:int
-    y:int
-
-
-# New Event System
-class EventType(Enum):
-    CLIENT_ARRIVAL = "CLIENT_ARRIVAL"
-    DRIVER_ARRIVAL = "DRIVER_ARRIVAL"
-    DRIVER_PICKUP_START = "DRIVER_PICKUP_START"
-    DRIVER_PICKUP_END = "DRIVER_PICKUP_END"
-    RIDE_START = "RIDE_START"
-    RIDE_END = "RIDE_END"
-    CLIENT_CANCELLATION = "CLIENT_CANCELLATION"
-    DRIVER_SHIFT_END = "DRIVER_SHIFT_END"
-
-@dataclass
-class EventInfo:
-    """Lightweight class to store essential event information"""
-    client_id: Optional[str] = None
-    driver_id: Optional[str] = None
-    start_location: Optional[Tuple[int, int]] = None
-    end_location: Optional[Tuple[int, int]] = None
-    cancelled: bool = False
-
-@dataclass
-class Event:
-    time: float
-    event_type: EventType
-    info: EventInfo
-    
-    def __lt__(self, other):
-        return self.time < other.time
-
-class FutureEventSet:
-    def __init__(self):
-        self.events = queue.PriorityQueue()
-        self.current_time = 0.0
-        
-        # Reference dictionaries to store full objects
-        self.client_registry: Dict[str, 'uber_client'] = {}
-        self.driver_registry: Dict[str, 'uber_driver'] = {}
-        
-        # Keep track of pending events for cancellation
-        self.pending_events: Dict[str, list[Event]] = {}
-    
-    def is_empty(self) -> bool:
-        """Check if event queue is empty"""
-        return self.events.empty()
-
-    def register_client(self, client: 'uber_client') -> str:
-        """Register a client using their assigned ID"""
-        self.client_registry[client.client_id] = client
-        self.pending_events[client.client_id] = []
-        return client.client_id
-    
-    def register_driver(self, driver: 'uber_driver') -> str:
-        """Register a driver using their assigned ID"""
-        self.driver_registry[driver.driver_id] = driver
-        self.pending_events[driver.driver_id] = []
-        return driver.driver_id
-    
-    def cleanup_registry(self, entity_id: str):
-        """Clean up registry entries and pending events"""
-        # Remove from registries
-        self.client_registry.pop(entity_id, None)
-        self.driver_registry.pop(entity_id, None)
-        
-        # Clean up pending events
-        self.pending_events.pop(entity_id, None)
-    
-    def validate_event_time(self, time: float) -> float:
-        """Validate and adjust event time if necessary"""
-        if time < self.current_time:
-            return self.current_time
-        return time
-
-    def add_event(self, event: Event):
-        """Add a new event to the priority queue and track it"""
-        # Validate time
-        event.time = self.validate_event_time(event.time)
-        
-        # Add to queue
-        self.events.put(event)
-        
-        # Initialize pending_events lists if they don't exist
-        if event.info.client_id and event.info.client_id not in self.pending_events:
-            self.pending_events[event.info.client_id] = []
-            
-        if event.info.driver_id and event.info.driver_id not in self.pending_events:
-            self.pending_events[event.info.driver_id] = []
-        
-        # Track event for entities involved
-        if event.info.client_id:
-            self.pending_events[event.info.client_id].append(event)
-        if event.info.driver_id:
-            self.pending_events[event.info.driver_id].append(event)
-    
-    def cancel_entity_events(self, entity_id: str):
-        """Cancel all pending events for a client or driver"""
-        if entity_id in self.pending_events:
-            for event in self.pending_events[entity_id]:
-                event.info.cancelled = True
-            self.pending_events[entity_id].clear()
-    
-    def get_next_event(self) -> Tuple[Optional[Event], Optional['uber_client'], Optional['uber_driver']]:
-        """Get next valid event and associated objects"""
-        while not self.events.empty():
-            event = self.events.get()
-            
-            # Skip cancelled events
-            if event.info.cancelled:
-                continue
-                
-            self.current_time = event.time
-            
-            # Get associated objects
-            client = self.get_client(event.info.client_id) if event.info.client_id else None
-            driver = self.get_driver(event.info.driver_id) if event.info.driver_id else None
-            
-            return event, client, driver
-            
-        return None, None, None
-
-    def get_client(self, client_id: str) -> Optional['uber_client']:
-        """Retrieve client object from registry"""
-        return self.client_registry.get(client_id)
-    
-    def get_driver(self, driver_id: str) -> Optional['uber_driver']:
-        """Retrieve driver object from registry"""
-        return self.driver_registry.get(driver_id)
-
-    # Event scheduling methods
-    def schedule_client_arrival(self, time: float, client: 'uber_client'):
-        """Schedule client arrival with registration check"""
-        if client.client_id not in self.client_registry:
-            self.register_client(client)
-            
-        event = Event(
-            time=time,
-            event_type=EventType.CLIENT_ARRIVAL,
-            info=EventInfo(
-                client_id=client.client_id,
-                start_location=(client.current_location.x, client.current_location.y)
-            )
-        )
-        self.add_event(event)
-    
-    def schedule_driver_arrival(self, time: float, driver: 'uber_driver'):
-        """Schedule driver arrival with registration check"""
-        if driver.driver_id not in self.driver_registry:
-            self.register_driver(driver)
-            
-        event = Event(
-            time=time,
-            event_type=EventType.DRIVER_ARRIVAL,
-            info=EventInfo(
-                driver_id=driver.driver_id,
-                start_location=(driver.current_location.x, driver.current_location.y)
-            )
-        )
-        self.add_event(event)
-
-    
-    def schedule_pickup_start(self, time: float, client: 'uber_client', driver: 'uber_driver'):
-        """Schedule pickup start with registration checks"""
-        if client.client_id not in self.client_registry:
-            self.register_client(client)
-        if driver.driver_id not in self.driver_registry:
-            self.register_driver(driver)
-            
-        event = Event(
-            time=time,
-            event_type=EventType.DRIVER_PICKUP_START,
-            info=EventInfo(
-                client_id=client.client_id,  # Use the proper ID attribute
-                driver_id=driver.driver_id,
-                start_location=(driver.current_location.x, driver.current_location.y),
-                end_location=(client.current_location.x, client.current_location.y)
-            )
-        )
-        self.add_event(event)
-
-
-    def schedule_pickup_end(self, time: float, client: 'uber_client', driver: 'uber_driver'):
-        """Schedule pickup end with proper client and driver IDs"""
-        event = Event(
-            time=time,
-            event_type=EventType.DRIVER_PICKUP_END,
-            info=EventInfo(
-                client_id=client.client_id,  # Use the proper ID attribute
-                driver_id=driver.driver_id,  # Use the proper ID attribute
-                start_location=(driver.current_location.x, driver.current_location.y),
-                end_location=(client.current_location.x, client.current_location.y)
-            )
-        )
-        self.add_event(event)
-
-    def schedule_ride_start(self, time: float, client: 'uber_client', driver: 'uber_driver'):
-        event = Event(
-            time=time,
-            event_type=EventType.RIDE_START,
-            info=EventInfo(
-                client_id=client.client_id,
-                driver_id=driver.driver_id,
-                start_location=(client.current_location.x, client.current_location.y),
-                end_location=(client.destination.x, client.destination.y)
-            )
-        )
-        self.add_event(event)
-    
-    def schedule_ride_end(self, time: float, client: 'uber_client', driver: 'uber_driver'):
-        event = Event(
-            time=time,
-            event_type=EventType.RIDE_END,
-            info=EventInfo(
-                client_id=client.client_id,
-                driver_id=driver.driver_id,
-                start_location=(client.current_location.x, client.current_location.y),
-                end_location=(client.destination.x, client.destination.y)
-            )
-        )
-        self.add_event(event)
-
-    def schedule_client_cancellation(self, time: float, client: 'uber_client'):
-        event = Event(
-            time=time,
-            event_type=EventType.CLIENT_CANCELLATION,
-            info=EventInfo(client_id=str(id(client)))
-        )
-        self.add_event(event)
-
-    def schedule_driver_shift_end(self, time: float, driver: 'uber_driver'):
-        """Schedule driver shift end with proper registration check"""
-        # Ensure driver is registered first
-        if driver.driver_id not in self.driver_registry:
-            self.register_driver(driver)
-            
-        event = Event(
-            time=time,
-            event_type=EventType.DRIVER_SHIFT_END,
-            info=EventInfo(driver_id=driver.driver_id)  # Use driver.driver_id instead of str(id(driver))
-        )
-        self.add_event(event)
-
-    
-    def get_registry_state(self):
-        """Get current state of registries for debugging"""
-        return {
-            'clients': list(self.client_registry.keys()),
-            'drivers': list(self.driver_registry.keys()),
-            'pending_events': {k: len(v) for k, v in self.pending_events.items()}
-        }
-
-class uber_client:
-    '''
-    A client in the uber simulation 
-    '''
-    _next_id = 1
-
-    def __init__(self,arrival_time, current_location:Location, destination:Location, 
-                 behaviour_type= "Normal",max_wait_time:float = 15.0
-                 ):
-        ''' 
-        Initialize a uber client(rider).
-
-        args:
-        todo
-        '''
-
-        self.client_id = f"C{uber_client._next_id}"
-        uber_client._next_id += 1
-        # basic attributes 
-        self.arrival_time = arrival_time
-        self.current_location = current_location
-        self.destination = destination
-        self.behaviour_type = behaviour_type  
-        self.max_wait_time = max_wait_time
-
-        #status tracking
-        self.status = "Waiting" # Waiting, Matched, InRide, Completed, Cancelled
-        self.assigned_driver = None
-        self.pickup_time = None
-        self.completion_time = None
-
-        # statistics
-        self.waiting_time = 0
-        self.ride_time = 0
-        self.total_cost = 0
-
-    @classmethod
-    def generate_client(cls,city_map,current_time, behavior_dist = None):
-        '''
-        Generate a new client
-
-        args:
-            city_map
-            arrival_time
-            behavior_dist
-        '''
-
-        if behavior_dist == None:
-            behavior_dist = {
-                "Normal":0.7,
-                "Premium":0.2,
-                "Patient":0.1
-            }
-        
-        grid_size = (city_map.width, city_map.height)
-        start_loc = Location(
-            x = random.randint(0,grid_size[0]-1),
-            y = random.randint(0,grid_size[1]-1)
-        )
-        # ensure they are not the same pos
-        while True:
-            des_loc = Location(
-            x = random.randint(0,grid_size[0]-1),
-            y = random.randint(0,grid_size[1]-1)
-        )
-            if (des_loc.x != start_loc.x) or (des_loc.y != start_loc.y):
-                break
-        behavior = random.choices(
-                    list(behavior_dist.keys()),
-                    weights=list(behavior_dist.values())
-                )[0]
-        
-        return cls(
-            arrival_time = current_time,
-            current_location = start_loc,
-            destination = des_loc,
-            behaviour_type = behavior
-        )
-    
-    def update_status(self, new_status: str, current_time: float):
-        '''
-        Update client status and calculate relevant times
-        
-        Args:
-            new_status: New status to set
-            current_time: Current simulation time
-        '''
-        self.status = new_status
-        
-        if new_status == "Matched":
-            self.waiting_time = current_time - self.arrival_time
-        elif new_status == "InRide":
-            self.pickup_time = current_time
-        elif new_status == "Completed":
-            self.completion_time = current_time
-            if self.pickup_time:
-                self.ride_time = current_time - self.pickup_time
-
-    def is_willing_to_wait(self,current_time):
-        '''
-        Check if client is still willing to wait based on their max wait time.
-        
-        Args:
-            current_time (float): Current simulation time
-        
-        Returns:
-            bool: True if client is still willing to wait, False otherwise
-
-        '''
-
-        current_wait  = current_time - self.arrival_time
-
-        if self.behaviour_type == "Patient":
-            return current_wait <= (self.max_wait_time *1.3)
-        elif self.behaviour_type == "Premium":
-            return current_wait <= (self.max_wait_time *0.7)
-        
-        return current_wait <= self.max_wait_time
-    
-    @classmethod
-    def reset_id_counter(cls):
-        """Reset the ID counter - useful for testing"""
-        cls._next_id = 1
-
-class uber_driver:
-    _next_id = 1
-    def __init__(self,current_location, ride_type= "UberX", status = "Idle"):
-        '''
-        Initialize a uber driver
-
-        args:
-        todo
-        '''
-        # Assign unique ID and increment counter
-        self.driver_id = f"D{uber_driver._next_id}"
-        uber_driver._next_id += 1
-        
-        # basic attributes
-        self.current_location = current_location
-        self.behaviour_type = ride_type
-        self.status = status
-        self.current_client = None
-
-        # calculated attributes
-        self.service_time = 0
-        self.waiting_time = 0
-    
-    @classmethod
-    def generate_driver(cls,city_map, ride_type_dist = None):
-        '''
-        Generate a new driver
-
-        args:
-            city_map
-            arrival_time
-            ride_type_dist
-        '''
-
-        if ride_type_dist == None:
-            ride_type_dist = {
-                "UberX":0.7,
-                "UberGreen":0.2,
-                "UberLux":0.1
-            }
-        
-        grid_size = (city_map.width, city_map.height)
-        start_loc = Location(
-            x = random.randint(0,grid_size[0]-1),
-            y = random.randint(0,grid_size[1]-1)
-        )
-        
-        ride_type = random.choices(
-                    list(ride_type_dist.keys()),
-                    weights=list(ride_type_dist.values())
-                )[0]
-        
-        return cls(
-            current_location = start_loc,
-            ride_type = ride_type,
-            status = "Idle"
-        )
-    
-    @classmethod
-    def reset_id_counter(cls):
-        """Reset the ID counter - useful for testing"""
-        cls._next_id = 1
-
-
+from driver import uber_driver
+from rider import uber_client
+from map import city_map, Location
+from FES import Event, EventType, EventInfo, FutureEventSet
 class uber_network:
     def __init__(self, city_map, client_arrival_rate, driver_arrival_rate, 
                  simulation_time: int = 1000,
@@ -538,11 +98,7 @@ class uber_network:
     
     def handle_client_arrival(self, event: Event, client: uber_client):
         """
-        Handle a new client arrival
-        
-        Args:
-            event (Event): The client arrival event
-            client (uber_client): The arriving client
+        Handle a new client arrival with improved queue handling
         """
         # Ensure client is registered with FES
         if client.client_id not in self.FES.client_registry:
@@ -553,40 +109,24 @@ class uber_network:
 
         # Schedule next client arrival
         self._schedule_next_client_arrival()
-        
-        # Try immediate matching if there are available drivers
-        if self.available_drivers:
-            best_score = -1
-            best_driver = None
-            
-            for driver in self.available_drivers:
-                score = self._calculate_match_score(client, driver)
-                if score > best_score:
-                    best_score = score
-                    best_driver = driver
-            
-            # If we found a good match, make it
-            if best_score >= self.base_score_threshold:
-                self._make_match(client, best_driver)
-                # No need to schedule cancellation as client is matched
-                return
-        
-        # If no immediate match, add to appropriate queue
+
+        # Queue client based on type
         if client.behaviour_type == "Premium":
             self.main_queue.put(client)
+            print(f"Premium client {client.client_id} added to main queue")
         else:
             self.secondary_queue.put(client)
+            print(f"Client {client.client_id} added to secondary queue")
         
+        '''
         if client.status == "Waiting":
             # Calculate when client might cancel
             cancellation_time = self.current_time + client.max_wait_time
             
             # Adjust cancellation time based on client type
             if client.behaviour_type == "Patient":
-                # Patient clients wait 30% longer
                 cancellation_time *= 1.3
             elif client.behaviour_type == "Premium":
-                # Premium clients wait 30% less
                 cancellation_time *= 0.7
                 
             # Schedule the potential cancellation event
@@ -595,9 +135,20 @@ class uber_network:
                 client
             )
             
-            # Log for debugging
-            print(f"Scheduled cancellation for client {client.client_id} at time {cancellation_time}")
+            #print(f"Client {client.client_id} cancellation scheduled for {cancellation_time}")
         
+        # Try matching queues if there are available drivers
+        # This will respect queue priority (main queue first, then secondary)
+        if self.available_drivers:
+            self._try_matching_queues()
+        '''
+        if self.available_drivers:
+            self._try_matching_queues()
+        
+        # Schedule next client arrival
+        self._schedule_next_client_arrival()
+        
+
         
     
     def handle_driver_arrival(self, event: Event, driver: uber_driver):
@@ -1103,7 +654,7 @@ class uber_network:
         
         # Try to match the now-available driver with waiting clients
         self._try_matching_queues()
-
+    '''
     def handle_client_cancellation(self, event: Event, client: uber_client):
         """
         Handle client cancellation due to wait time or other factors.
@@ -1122,6 +673,10 @@ class uber_network:
         # Validation checks
         if not client:
             print(f"Error: Missing client for cancellation event at time {self.current_time}")
+            return
+        
+        if client.client_id not in self.FES.client_registry:
+            print(f"Error: Client {client.client_id} not registered with FES for cancellation")
             return
             
         # Only process cancellation if client is still waiting
@@ -1168,6 +723,8 @@ class uber_network:
         
         # Clean up from FES registry if needed
         self.FES.cleanup_registry(client.client_id)
+    '''
+    
 
     def handle_driver_shift_end(self, event: Event, driver: uber_driver):
         """
@@ -1446,54 +1003,66 @@ class uber_network:
         2. Then tries secondary queue if drivers still available
         3. Maintains queue priorities while being efficient
         """
-        # Quick check for available drivers
         if not self.available_drivers:
+            print("No available drivers for matching")
             return
-            
-        # Log initial state
-        initial_state = {
-            'main_queue_size': self.main_queue.qsize(),
-            'secondary_queue_size': self.secondary_queue.qsize(),
-            'available_drivers': len(self.available_drivers)
-        }
         
-        print(f"""
-        Starting Queue Matching:
-        - Main Queue Size: {initial_state['main_queue_size']}
-        - Secondary Queue Size: {initial_state['secondary_queue_size']}
-        - Available Drivers: {initial_state['available_drivers']}
-        """)
+        matches_made = 0
+        main_queue_size = self.main_queue.qsize()
+        secondary_queue_size = self.secondary_queue.qsize()
         
-        # Try main queue first with higher threshold
-        matches_made = self._try_matching_queue(
-            self.main_queue,
-            self.base_score_threshold,
-            is_main_queue=True
-        )
+        # Process main queue with priority
+        while not self.main_queue.empty() and self.available_drivers:
+            client = self.main_queue.get()
+            if client.status == "Waiting":
+                # Try matching with reduced threshold for queued clients
+                adjusted_threshold = self.base_score_threshold * 0.8
+                best_score = -1
+                best_driver = None
+                
+                for driver in self.available_drivers:
+                    score = self._calculate_match_score(client, driver)
+                    if score > best_score:
+                        best_score = score
+                        best_driver = driver
+                
+                if best_score >= adjusted_threshold:
+                    self._make_match(client, best_driver)
+                    matches_made += 1
+                else:
+                    # Put back in queue if no suitable match
+                    self.main_queue.put(client)
         
-        # If drivers still available, try secondary queue
-        if self.available_drivers:
-            additional_matches = self._try_matching_queue(
-                self.secondary_queue,
-                self.secondary_queue_threshold,
-                is_main_queue=False
-            )
-            matches_made += additional_matches
-        
-        # Log matching results
-        final_state = {
-            'main_queue_size': self.main_queue.qsize(),
-            'secondary_queue_size': self.secondary_queue.qsize(),
-            'available_drivers': len(self.available_drivers)
-        }
+        # Process secondary queue if drivers still available
+        while not self.secondary_queue.empty() and self.available_drivers:
+            client = self.secondary_queue.get()
+            if client.status == "Waiting":
+                # Use secondary threshold for these matches
+                best_score = -1
+                best_driver = None
+                
+                for driver in self.available_drivers:
+                    score = self._calculate_match_score(client, driver)
+                    if score > best_score:
+                        best_score = score
+                        best_driver = driver
+                
+                if best_score >= self.secondary_queue_threshold:
+                    self._make_match(client, best_driver)
+                    matches_made += 1
+                else:
+                    # Put back in queue if no suitable match
+                    self.secondary_queue.put(client)
         
         print(f"""
         Queue Matching Completed:
-        - Total Matches Made: {matches_made}
-        - Remaining Main Queue: {final_state['main_queue_size']}
-        - Remaining Secondary Queue: {final_state['secondary_queue_size']}
-        - Remaining Drivers: {final_state['available_drivers']}
+        - Matches Made: {matches_made}
+        - Remaining Main Queue: {self.main_queue.qsize()}
+        - Remaining Secondary Queue: {self.secondary_queue.qsize()}
+        - Remaining Drivers: {len(self.available_drivers)}
         """)
+        
+        return matches_made
 
     def _try_matching_queue(self, queue_obj: queue.Queue, threshold: float, is_main_queue: bool) -> int:
         """
@@ -1521,9 +1090,7 @@ class uber_network:
             if client.status != "Waiting":
                 continue
                 
-            # Skip if client no longer willing to wait
-            if not client.is_willing_to_wait(self.current_time):
-                continue
+            
             
             # Adjust threshold based on waiting time
             wait_time = self.current_time - client.arrival_time
@@ -1594,6 +1161,9 @@ class uber_network:
             self.FES.register_client(client)
         if driver.driver_id not in self.FES.driver_registry:
             self.FES.register_driver(driver)
+
+        wait_time = self.current_time - client.arrival_time
+        self.stats['total_wait_time_matched'] = self.stats.get('total_wait_time_matched', 0) + wait_time
         
         # Update statuses and assignments
         client.update_status("Matched", self.current_time)
@@ -1612,14 +1182,15 @@ class uber_network:
         self.stats['total_matches'] = self.stats.get('total_matches', 0) + 1
         
         # Remove client from queues if present
-        self._remove_from_queues(client)
+        removal_results = self._remove_from_queues(client)
+        if removal_results['original_queue'] == 'secondary':
+            self.stats['secondary_queue_matches'] = self.stats.get('secondary_queue_matches', 0) + 1
         
         # Calculate initial pickup parameters
         start_pos = (driver.current_location.x, driver.current_location.y)
         end_pos = (client.current_location.x, client.current_location.y)
         
         # Schedule pickup start event
-        # Note: schedule_pickup_start already handles the event creation and addition
         self.FES.schedule_pickup_start(
             time=self.current_time,
             client=client,
@@ -2073,8 +1644,6 @@ class uber_network:
                     self.handle_ride_start(event, client, driver)
                 elif event.event_type == EventType.RIDE_END:
                     self.handle_ride_end(event, client, driver)
-                elif event.event_type == EventType.CLIENT_CANCELLATION:
-                    self.handle_client_cancellation(event, client)
                 elif event.event_type == EventType.DRIVER_SHIFT_END:
                     self.handle_driver_shift_end(event, driver)
 
@@ -2145,137 +1714,3 @@ class uber_network:
                                     if stats['total_clients'] > 0 else 0)
         
         return stats
-
-
-class city_map:
-    def __init__(self, grid_size, num_hotspots=3):
-        """
-        Initialize a grid-based city map with traffic hotspots.
-        
-        Args:
-            grid_size (tuple): A tuple of (width, height) representing the size of the grid
-            num_hotspots (int): Number of high-traffic areas to generate
-        """
-        self.width, self.height = grid_size
-        self.road_network = self._create_road_network()
-        self.traffic_density = self._initialize_traffic(num_hotspots)
-        
-    def _create_road_network(self):
-        """Creates a dictionary representing the road network"""
-        network = {}
-        for x in range(self.width):
-            for y in range(self.height):
-                neighbors = []
-                if x > 0:
-                    neighbors.append((x-1, y))
-                if x < self.width - 1:
-                    neighbors.append((x+1, y))
-                if y > 0:
-                    neighbors.append((x, y-1))
-                if y < self.height - 1:
-                    neighbors.append((x, y+1))
-                network[(x, y)] = neighbors
-        return network
-    
-    def _initialize_traffic(self, num_hotspots):
-        """Initialize traffic density map with hotspots"""
-        density = defaultdict(lambda: 0.1)
-        
-        hotspots = []
-        min_distance = min(self.width, self.height) // (num_hotspots + 1)
-        
-        while len(hotspots) < num_hotspots:
-            x = random.randint(0, self.width-1)
-            y = random.randint(0, self.height-1)
-            new_spot = (x, y)
-            
-            if all(abs(x - spot[0]) + abs(y - spot[1]) >= min_distance 
-                   for spot in hotspots):
-                hotspots.append(new_spot)
-                
-                for dx in range(-2, 3):
-                    for dy in range(-2, 3):
-                        pos_x = x + dx
-                        pos_y = y + dy
-                        if 0 <= pos_x < self.width and 0 <= pos_y < self.height:
-                            distance = abs(dx) + abs(dy)
-                            if distance == 0:
-                                density[(pos_x, pos_y)] = 0.9
-                            elif distance == 1:
-                                density[(pos_x, pos_y)] = 0.7
-                            else:
-                                density[(pos_x, pos_y)] = 0.4
-        
-        return dict(density)
-    
-    def get_traffic_density(self, location):
-        """
-        Get traffic density at a specific location
-        
-        Args:
-            location (tuple): Position as (x, y)
-            
-        Returns:
-            float: Traffic density value between 0 and 1
-        """
-        x, y = location
-        return self.traffic_density.get((x, y), 0.1)
-    
-    def get_neighbors(self, location):
-        """Get all valid neighboring locations"""
-        return self.road_network.get(location, [])
-    
-    def calculate_distance(self, start, end):
-        """Calculate Manhattan distance between two points"""
-        return abs(end[0] - start[0]) + abs(end[1] - start[1])
-    
-    def is_valid_location(self, location):
-        """Check if a location is within bounds"""
-        x, y = location
-        return 0 <= x < self.width and 0 <= y < self.height
-    
-    def get_all_traffic_data(self):
-        """
-        Get complete traffic density map
-        
-        Returns:
-            dict: Dictionary mapping (x,y) coordinates to traffic density values
-        """
-        return self.traffic_density
-
-def get_traffic_level(density):
-    """Helper function to convert density value to traffic level description"""
-    if density >= 0.9:
-        return "Very High"
-    elif density >= 0.7:
-        return "High"
-    elif density >= 0.4:
-        return "Moderate"
-    else:
-        return "Low"
-
-def visualize_traffic_map(city):
-    """
-    Visualize the traffic density map.
-    
-    Args:
-        city: Instance of city_map class
-    """
-    traffic_matrix = np.zeros((city.width, city.height))
-    traffic_data = city.get_all_traffic_data()
-    
-    for (x, y), density in traffic_data.items():
-        traffic_matrix[x][y] = density
-    
-    plt.figure(figsize=(10, 8))
-    plt.imshow(traffic_matrix.T, cmap='YlOrRd', interpolation='nearest')
-    plt.colorbar(label='Traffic Density')
-    
-    plt.grid(True, which='major', color='black', linewidth=0.5)
-    plt.xticks(range(city.width))
-    plt.yticks(range(city.height))
-    
-    plt.title('Traffic Density Map')
-    plt.xlabel('X Coordinate')
-    plt.ylabel('Y Coordinate')
-    plt.show()

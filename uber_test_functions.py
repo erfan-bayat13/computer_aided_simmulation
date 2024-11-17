@@ -1,56 +1,102 @@
+import random
+import numpy as np
+import matplotlib.pyplot as plt
 from uber_stratch import *
 
+def run_simulation_test(
+    grid_size=(10, 10),
+    simulation_time=10,
+    client_arrival_rate=0.1,  # Average 1 client every 10 time units
+    driver_arrival_rate=0.05,  # Average 1 driver every 20 time units
+    num_hotspots=3,
+    pre_simulation_drivers=20,
+    seed=42
+):
+    """
+    Run a complete test of the Uber simulation system.
+    
+    Args:
+        grid_size: Tuple of (width, height) for the city grid
+        simulation_time: Total time to run the simulation
+        client_arrival_rate: Rate at which new clients appear
+        driver_arrival_rate: Rate at which new drivers appear
+        num_hotspots: Number of high-traffic areas
+        pre_simulation_drivers: Number of drivers to start with
+        seed: Random seed for reproducibility
+    """
+    # Set random seeds
+    random.seed(seed)
+    np.random.seed(seed)
+    
+    # Create city map and visualize initial traffic
+    print("Initializing city map...")
+    city = city_map(grid_size, num_hotspots)
+    
+    # Visualize initial traffic conditions
+    plt.figure(figsize=(10, 8))
+    traffic_data = np.zeros(grid_size)
+    for (x, y), density in city.get_all_traffic_data().items():
+        traffic_data[x][y] = density
+    
+    plt.imshow(traffic_data.T, cmap='YlOrRd', interpolation='nearest')
+    plt.colorbar(label='Traffic Density')
+    plt.title('Initial Traffic Density Map')
+    plt.xlabel('X Coordinate')
+    plt.ylabel('Y Coordinate')
+    plt.show()
+    
+    # Initialize network
+    print("\nInitializing Uber network...")
+    network = uber_network(
+        city_map=city,
+        client_arrival_rate=client_arrival_rate,
+        driver_arrival_rate=driver_arrival_rate,
+        simulation_time=simulation_time,
+        pre_simulation_driver=pre_simulation_drivers,
+        seed=seed
+    )
+    
+    # Run simulation
+    print("\nStarting simulation...")
+    network.run()
+    
+    # Get final statistics
+    stats = network.get_statistics()
+    
+    # Print detailed statistics
+    print("\nDetailed Statistics:")
+    print("-" * 50)
+    print(f"Total Simulation Time: {simulation_time}")
+    print(f"Total Clients: {stats['total_clients']}")
+    print(f"Total Matches: {stats['total_matches']}")
+    print(f"Total Completed Rides: {stats['total_completed_rides']}")
+    print(f"Total Cancellations: {stats['total_cancellations']}")
+    
+    if stats['total_completed_rides'] > 0:
+        print(f"Average Ride Time: {stats['average_ride_time']:.2f}")
+    
+    if stats['total_matches'] > 0:
+        print(f"Average Wait Time: {stats['average_wait_time']:.2f}")
+    
+    print(f"Completion Rate: {stats['completion_rate']*100:.2f}%")
+    print(f"Cancellation Rate: {stats['cancellation_rate']*100:.2f}%")
+    
+    # Get final queue sizes
+    queue_sizes = network.get_queue_sizes()
+    print(f"\nFinal Queue States:")
+    print(f"Main Queue Size: {queue_sizes['main_queue']}")
+    print(f"Secondary Queue Size: {queue_sizes['secondary_queue']}")
+    
+    return network, stats
 
-
-def test_uber_queues():
-    """Test the uber network simulation with focus on queue handling"""
-    # Create a city map and network with pre-simulation drivers
-    city_map_test = city_map((10, 10), num_hotspots=3)
-    network = uber_network(city_map_test, 0.1, 0.05, pre_simulation_driver=5)
-    
-    # Print initial state with pre-simulation drivers
-    print("Initial state:")
-    print(f"Number of available drivers: {len(network.available_drivers)}")
-    print(f"Main queue size: {network.main_queue.qsize()}")
-    print(f"Secondary queue size: {network.secondary_queue.qsize()}")
-    
-    # Generate and schedule test clients
-    print("\nScheduling client arrivals:")
-    for i in range(5):
-        client = uber_client.generate_client(city_map_test, network.current_time + i)
-        network.FES.schedule_client_arrival(network.current_time + i, client)
-        print(f"\nScheduled client {i+1} arrival at time {network.current_time + i}")
-        
-        # Process events until current time
-        while not network.FES.is_empty() and network.FES.peek_next_time() <= network.current_time + i:
-            event, client, driver = network.FES.get_next_event()
-            network.current_time = event.time
-            
-            if event.event_type == EventType.CLIENT_ARRIVAL:
-                network.handle_client_arrival(event, client)
-                print(f"After handling client {i+1}:")
-                print(f"Available drivers: {len(network.available_drivers)}")
-                print(f"Main queue size: {network.main_queue.qsize()}")
-                print(f"Secondary queue size: {network.secondary_queue.qsize()}")
-    
-    # Now add some additional drivers
-    print("\nAdding additional drivers:")
-    for i in range(3):
-        driver = uber_driver.generate_driver(city_map_test)
-        network.FES.schedule_driver_arrival(network.current_time + i, driver)
-        
-        # Process events until current time
-        while not network.FES.events.empty() and network.FES.peek_next_time() <= network.current_time + i:
-            event, client, driver = network.FES.get_next_event()
-            network.current_time = event.time
-            
-            if event.event_type == EventType.DRIVER_ARRIVAL:
-                network.handle_driver_arrival(event, driver)
-                print(f"After adding driver {i+1}:")
-                print(f"Available drivers: {len(network.available_drivers)}")
-                print(f"Main queue size: {network.main_queue.qsize()}")
-                print(f"Secondary queue size: {network.secondary_queue.qsize()}")
-    
-    return network
-
-network = test_uber_queues()
+if __name__ == "__main__":
+    # Run simulation with default parameters
+    network, stats = run_simulation_test(
+        grid_size=(10, 10),
+        simulation_time=100,
+        client_arrival_rate=0.1,
+        driver_arrival_rate=0.05,
+        num_hotspots=3,
+        pre_simulation_drivers=20,
+        seed=42
+    )
