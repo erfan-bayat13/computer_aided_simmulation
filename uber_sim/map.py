@@ -1,6 +1,8 @@
 from collections import defaultdict
 from dataclasses import dataclass
+import math
 import random
+from typing import Dict, Tuple
 
 @dataclass
 class Location:
@@ -19,6 +21,23 @@ class city_map:
         self.width, self.height = grid_size
         self.road_network = self._create_road_network()
         self.traffic_density = self._initialize_traffic(num_hotspots)
+        self.base_traffic_density = self.traffic_density.copy()  # Store initial state
+        self.current_traffic_density = self.traffic_density.copy()
+        self.hotspots = []
+        self.events = []
+
+        self.time_of_day = 0
+        self.rush_hours = {
+            'morning': (7, 9),
+            'evening': (16, 18)
+        }
+
+        self.current_weather = 'clear'
+        self.weather_factors = {
+            'clear': 1.0,
+            'rain': 1.3,
+            'fog': 1.5
+        }
         
     def _create_road_network(self):
         """Creates a dictionary representing the road network"""
@@ -68,18 +87,168 @@ class city_map:
         
         return dict(density)
     
+    def update_traffic(self, current_time: float):
+        """
+        Update traffic conditions with more noticeable changes for shorter simulations.
+        
+        Args:
+            current_time (float): Current simulation time
+        """
+        # Make a copy of the current traffic state
+        new_traffic = self.traffic_density.copy()
+        
+        # Calculate time-based factor (oscillating pattern)
+        # Using shorter time period for more noticeable changes
+        time_factor = 1.0 + 0.3 * math.sin(current_time / 100.0)  # Shorter cycle
+        
+        # Apply time factor to all locations
+        for pos in new_traffic:
+            # Apply time-based changes
+            new_traffic[pos] = new_traffic[pos] * time_factor
+            
+            # Add some random variation
+            random_factor = 1.0 + random.uniform(-0.1, 0.1)
+            new_traffic[pos] *= random_factor
+            
+            # Ensure values stay within bounds
+            new_traffic[pos] = max(0.1, min(0.9, new_traffic[pos]))
+        
+        # Update the traffic state
+        self.traffic_density = new_traffic
+        
+        # Print some debug info
+        sample_pos = (self.width//2, self.height//2)  # Center of map
+        print(f"\nTraffic Update at time {current_time:.1f}:")
+        print(f"Time factor: {time_factor:.3f}")
+        print(f"Center traffic: {self.traffic_density[sample_pos]:.3f}")
+        
+    def _get_time_factor(self) -> float:
+        hour = self.time_of_day
+        
+        # Morning rush hour
+        if self.rush_hours['morning'][0] <= hour < self.rush_hours['morning'][1]:
+            # Gradual increase during morning rush
+            progress = (hour - self.rush_hours['morning'][0]) / (self.rush_hours['morning'][1] - self.rush_hours['morning'][0])
+            return 1.0 + (0.5 * math.sin(progress * math.pi))
+        
+        # Evening rush hour
+        elif self.rush_hours['evening'][0] <= hour < self.rush_hours['evening'][1]:
+            # Gradual increase during evening rush
+            progress = (hour - self.rush_hours['evening'][0]) / (self.rush_hours['evening'][1] - self.rush_hours['evening'][0])
+            return 1.0 + (0.6 * math.sin(progress * math.pi))
+        
+        # Night time reduction
+        elif 22 <= hour or hour < 5:
+            return 0.6
+        
+        # Normal daytime traffic
+        return 1.0
+    
+    def _update_hotspots(self, current_time: float):
+        """Update dynamic hotspots positions and intensities"""
+        # Update existing hotspots
+        for hotspot in self.hotspots:
+            # Move hotspot slightly based on time
+            dx = math.sin(current_time / 3600) * 0.1
+            dy = math.cos(current_time / 3600) * 0.1
+            
+            hotspot['x'] = (hotspot['x'] + dx) % self.width
+            hotspot['y'] = (hotspot['y'] + dy) % self.height
+            
+            # Vary intensity
+            time_factor = 1 + 0.2 * math.sin(current_time / 7200)  # 2-hour cycle
+            hotspot['intensity'] *= time_factor
+            hotspot['intensity'] = max(0.2, min(0.8, hotspot['intensity']))
+        
+        # Occasionally add or remove hotspots
+        if random.random() < 0.01:  # 1% chance each update
+            if len(self.hotspots) < 5 and random.random() < 0.6:
+                # Add new hotspot
+                self.hotspots.append({
+                    'x': random.randint(0, self.width-1),
+                    'y': random.randint(0, self.height-1),
+                    'intensity': random.uniform(0.3, 0.6),
+                    'radius': random.randint(2, 4)
+                })
+            elif self.hotspots:
+                # Remove random hotspot
+                self.hotspots.pop(random.randint(0, len(self.hotspots)-1))
+    
+    def _calculate_hotspot_effects(self) -> Dict[Tuple[int, int], float]:
+        """Calculate traffic effects from all hotspots"""
+        effects = defaultdict(float)
+        
+        for hotspot in self.hotspots:
+            center_x, center_y = int(hotspot['x']), int(hotspot['y'])
+            radius = hotspot['radius']
+            intensity = hotspot['intensity']
+            
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    x, y = center_x + dx, center_y + dy
+                    if 0 <= x < self.width and 0 <= y < self.height:
+                        distance = math.sqrt(dx*dx + dy*dy)
+                        if distance <= radius:
+                            effect = intensity * (1 - distance/radius)
+                            effects[(x, y)] += effect
+        
+        return effects
+    
+    def _update_events(self, current_time: float):
+        """Update special events (accidents, construction, etc.)"""
+        # Remove expired events
+        self.events = [event for event in self.events 
+                      if event[3] + event[4] > current_time]
+        
+        # Randomly add new events
+        if random.random() < 0.005:  # 0.5% chance each update
+            location = (random.randint(0, self.width-1), 
+                       random.randint(0, self.height-1))
+            radius = random.randint(1, 3)
+            intensity = random.uniform(0.3, 0.7)
+            duration = random.uniform(1800, 7200)  # 30 mins to 2 hours
+            
+            self.events.append((location, radius, intensity, 
+                              current_time, duration))
+
+    def _calculate_event_effects(self) -> Dict[Tuple[int, int], float]:
+        """Calculate traffic effects from all active events"""
+        effects = defaultdict(float)
+        
+        for location, radius, intensity, _, _ in self.events:
+            center_x, center_y = location
+            
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    x, y = center_x + dx, center_y + dy
+                    if 0 <= x < self.width and 0 <= y < self.height:
+                        distance = math.sqrt(dx*dx + dy*dy)
+                        if distance <= radius:
+                            effect = intensity * (1 - distance/radius)
+                            effects[(x, y)] += effect
+        
+        return effects
+
+    def _update_weather(self, current_time: float):
+        """Update weather conditions periodically"""
+        # Change weather every 4-8 hours (on average)
+        if random.random() < 1/14400:  # Assuming time units are seconds
+            weights = {
+                'clear': 0.7,
+                'rain': 0.2,
+                'snow': 0.1
+            }
+            self.current_weather = random.choices(
+                list(weights.keys()),
+                weights=list(weights.values())
+            )[0]
+    
     def get_traffic_density(self, location):
         """
         Get traffic density at a specific location
-        
-        Args:
-            location (tuple): Position as (x, y)
-            
-        Returns:
-            float: Traffic density value between 0 and 1
         """
         x, y = location
-        return self.traffic_density.get((x, y), 0.1)
+        return self.current_traffic_density.get((x, y), 0.1)
     
     def get_neighbors(self, location):
         """Get all valid neighboring locations"""

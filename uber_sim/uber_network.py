@@ -103,12 +103,19 @@ class uber_network:
         # Ensure client is registered with FES
         if client.client_id not in self.FES.client_registry:
             self.FES.register_client(client)
+            print(f"Client {client.client_id} registered with FES")
         
+        client.status = "Waiting"
+        client.arrival_time = self.current_time
+
         # Update statistics
         self.stats['total_clients'] += 1
 
         # Schedule next client arrival
+        next_arrival = self.FES.current_time + random.expovariate(self.client_arrival_rate)
+        print(f"Scheduling next client arrival at time: {next_arrival:.2f}")
         self._schedule_next_client_arrival()
+
 
         # Queue client based on type
         if client.behaviour_type == "Premium":
@@ -142,15 +149,14 @@ class uber_network:
         if self.available_drivers:
             self._try_matching_queues()
         '''
+        # Try matching queues if there are available drivers
         if self.available_drivers:
+            print(f"Attempting to match - Available drivers: {len(self.available_drivers)}")
             self._try_matching_queues()
-        
-        # Schedule next client arrival
-        self._schedule_next_client_arrival()
+        else:
+            print("No available drivers for immediate matching")
         
 
-        
-    
     def handle_driver_arrival(self, event: Event, driver: uber_driver):
         """
         Handle a new driver arrival into the system.
@@ -997,156 +1003,137 @@ class uber_network:
     def _try_matching_queues(self):
         """
         Try matching waiting clients from both queues with available drivers.
-        
-        This function:
-        1. First attempts to match from main queue
-        2. Then tries secondary queue if drivers still available
-        3. Maintains queue priorities while being efficient
         """
+        # Quick check for available drivers
         if not self.available_drivers:
             print("No available drivers for matching")
             return
-        
-        matches_made = 0
-        main_queue_size = self.main_queue.qsize()
-        secondary_queue_size = self.secondary_queue.qsize()
-        
-        # Process main queue with priority
-        while not self.main_queue.empty() and self.available_drivers:
-            client = self.main_queue.get()
-            if client.status == "Waiting":
-                # Try matching with reduced threshold for queued clients
-                adjusted_threshold = self.base_score_threshold * 0.8
-                best_score = -1
-                best_driver = None
                 
-                for driver in self.available_drivers:
-                    score = self._calculate_match_score(client, driver)
-                    if score > best_score:
-                        best_score = score
-                        best_driver = driver
-                
-                if best_score >= adjusted_threshold:
-                    self._make_match(client, best_driver)
-                    matches_made += 1
-                else:
-                    # Put back in queue if no suitable match
-                    self.main_queue.put(client)
+        # Log initial state
+        initial_state = {
+            'main_queue_size': self.main_queue.qsize(),
+            'secondary_queue_size': self.secondary_queue.qsize(),
+            'available_drivers': len(self.available_drivers)
+        }
         
-        # Process secondary queue if drivers still available
-        while not self.secondary_queue.empty() and self.available_drivers:
+        print(f"\nStarting Queue Matching Process:")
+        print(f"Main Queue Size: {initial_state['main_queue_size']}")
+        print(f"Secondary Queue Size: {initial_state['secondary_queue_size']}")
+        print(f"Available Drivers: {initial_state['available_drivers']}")
+
+        self._rebalance_queues()
+        
+        # Process main queue first
+        matches_made = self._try_matching_queue(
+            self.main_queue,
+            self.base_score_threshold,
+            is_main_queue=True
+        )
+        
+        # Process secondary queue
+        if self.available_drivers:
+            additional_matches = self._try_matching_queue(
+                self.secondary_queue,
+                self.secondary_queue_threshold,
+                is_main_queue=False
+            )
+            matches_made += additional_matches
+        
+        print(f"Total matches made: {matches_made}")
+    
+    def _rebalance_queues(self):
+        """
+        Move long-waiting clients from secondary to main queue
+        """
+        if self.secondary_queue.empty():
+            return
+            
+        # Store clients temporarily
+        temp_clients = []
+        promoted_count = 0
+        
+        # Base threshold for promotion (5 minutes in simulation time)
+        wait_threshold = 100.0  
+        
+        while not self.secondary_queue.empty():
             client = self.secondary_queue.get()
-            if client.status == "Waiting":
-                # Use secondary threshold for these matches
-                best_score = -1
-                best_driver = None
+            
+            # Skip if client is no longer waiting
+            if client.status != "Waiting":
+                continue
                 
-                for driver in self.available_drivers:
-                    score = self._calculate_match_score(client, driver)
-                    if score > best_score:
-                        best_score = score
-                        best_driver = driver
-                
-                if best_score >= self.secondary_queue_threshold:
-                    self._make_match(client, best_driver)
-                    matches_made += 1
-                else:
-                    # Put back in queue if no suitable match
-                    self.secondary_queue.put(client)
+            wait_time = self.current_time - client.arrival_time
+            
+            # Promote to main queue if waiting too long
+            if wait_time > wait_threshold:
+                self.main_queue.put(client)
+                promoted_count += 1
+                print(f"Promoted long-waiting client {client.client_id} to main queue (wait time: {wait_time:.1f})")
+            else:
+                temp_clients.append(client)
         
-        print(f"""
-        Queue Matching Completed:
-        - Matches Made: {matches_made}
-        - Remaining Main Queue: {self.main_queue.qsize()}
-        - Remaining Secondary Queue: {self.secondary_queue.qsize()}
-        - Remaining Drivers: {len(self.available_drivers)}
-        """)
+        # Return non-promoted clients to secondary queue
+        for client in temp_clients:
+            self.secondary_queue.put(client)
         
-        return matches_made
+        if promoted_count > 0:
+            print(f"Promoted {promoted_count} clients to main queue")
 
     def _try_matching_queue(self, queue_obj: queue.Queue, threshold: float, is_main_queue: bool) -> int:
         """
-        Try matching clients from a specific queue with available drivers.
-        
-        Args:
-            queue_obj: The queue to process
-            threshold: Base matching threshold for this queue
-            is_main_queue: Whether this is the main queue (affects matching criteria)
-        
-        Returns:
-            int: Number of successful matches made
+        Try matching clients from a specific queue.
         """
         if queue_obj.empty() or not self.available_drivers:
             return 0
-            
+                
         matches_made = 0
         temp_queue = queue.Queue()
         initial_size = queue_obj.qsize()
         
+        print(f"\nProcessing {'Main' if is_main_queue else 'Secondary'} Queue:")
+        print(f"Initial queue size: {initial_size}")
+        print(f"Available drivers: {len(self.available_drivers)}")
+        
         while not queue_obj.empty() and self.available_drivers:
             client = queue_obj.get()
             
-            # Skip if client no longer waiting
+            # Skip if client is not in waiting status
             if client.status != "Waiting":
+                print(f"Skipping client {client.client_id} - status is {client.status}")
                 continue
-                
-            
-            
-            # Adjust threshold based on waiting time
-            wait_time = self.current_time - client.arrival_time
-            threshold_adjustment = min(wait_time / 50.0, 0.3)  # Max 30% reduction
-            adjusted_threshold = threshold * (1.0 - threshold_adjustment)
-            
-            # Further adjust for premium clients in main queue
-            if is_main_queue and client.behaviour_type == "Premium":
-                adjusted_threshold *= 0.8  # 20% lower threshold for premium clients
             
             # Find best available driver
             best_score = -1
             best_driver = None
-            match_scores = []  # For logging
             
             for driver in self.available_drivers:
+                if driver.status != "Idle":
+                    continue
                 score = self._calculate_match_score(client, driver)
-                match_scores.append((driver, score))
                 if score > best_score:
                     best_score = score
                     best_driver = driver
             
-            if match_scores:  # If we found any potential matches
-                print(f"""
-                Queue Matching Attempt:
-                - Queue Type: {'Main' if is_main_queue else 'Secondary'}
-                - Client ID: {client.client_id}
-                - Wait Time: {wait_time:.2f}
-                - Adjusted Threshold: {adjusted_threshold:.3f}
-                - Best Score: {best_score:.3f}
-                - Top 3 Scores: {[(d.driver_id, f"{s:.3f}") for d, s in sorted(match_scores, key=lambda x: x[1], reverse=True)[:3]]}
-                """)
+            # Determine matching threshold
+            adjusted_threshold = threshold
+            if is_main_queue and client.behaviour_type == "Premium":
+                adjusted_threshold *= 0.8  # Lower threshold for premium clients
             
             if best_score >= adjusted_threshold:
-                # Make the match
+                print(f"Match found - Client: {client.client_id}, Driver: {best_driver.driver_id}, Score: {best_score:.3f}")
                 self._make_match(client, best_driver)
                 matches_made += 1
             else:
-                # Return to queue if no match found
+                print(f"No suitable match for client {client.client_id} - returning to queue")
                 temp_queue.put(client)
         
         # Return unmatched clients to queue
         while not temp_queue.empty():
             queue_obj.put(temp_queue.get())
         
-        # Log queue processing results
-        print(f"""
-        Queue Processing Complete:
-        - Queue Type: {'Main' if is_main_queue else 'Secondary'}
-        - Initial Size: {initial_size}
-        - Matches Made: {matches_made}
-        - Remaining Size: {queue_obj.qsize()}
-        - Remaining Drivers: {len(self.available_drivers)}
-        """)
-        
+        print(f"Queue processing complete - Matches made: {matches_made}")
         return matches_made
+
     
     def _make_match(self, client: uber_client, driver: uber_driver):
         """
@@ -1163,8 +1150,14 @@ class uber_network:
             self.FES.register_driver(driver)
 
         wait_time = self.current_time - client.arrival_time
-        self.stats['total_wait_time_matched'] = self.stats.get('total_wait_time_matched', 0) + wait_time
-        
+        self.stats['total_waiting_time'] = self.stats.get('total_waiting_time', 0) + wait_time
+        self.stats['total_matches'] = self.stats.get('total_matches', 0) + 1
+
+        # Track individual wait time for analysis
+        if not hasattr(self.stats, 'wait_times'):
+            self.stats['wait_times'] = []
+        self.stats['wait_times'].append(wait_time)
+            
         # Update statuses and assignments
         client.update_status("Matched", self.current_time)
         client.assigned_driver = driver
@@ -1178,8 +1171,6 @@ class uber_network:
         # Update active rides tracking
         self.active_rides[client] = driver
         
-        # Update statistics
-        self.stats['total_matches'] = self.stats.get('total_matches', 0) + 1
         
         # Remove client from queues if present
         removal_results = self._remove_from_queues(client)
@@ -1606,6 +1597,9 @@ class uber_network:
         events_processed = 0
         last_report_time = 0
         report_interval = 100  # Report every 100 time units
+
+        traffic_update_interval = 50  # Update traffic every 10 time units
+        last_traffic_update = 0
         
         while True:
             # Get next event
@@ -1624,6 +1618,12 @@ class uber_network:
             
             # Update current time
             self.current_time = event.time
+
+            # Update traffic conditions periodically
+            if self.current_time - last_traffic_update >= traffic_update_interval:
+                print(f"\n--- Updating Traffic at time {self.current_time} ---")
+                self.city_map.update_traffic(self.current_time)
+                last_traffic_update = self.current_time
             
             # Progress report
             if self.current_time - last_report_time >= report_interval:
@@ -1680,9 +1680,19 @@ class uber_network:
         print(f"Active rides: {len(self.active_rides)}")
         print(f"Main queue size: {sizes['main_queue']}")
         print(f"Secondary queue size: {sizes['secondary_queue']}")
-        
+
+        # Add traffic monitoring for center and one corner of map
+        sample_points = [
+            (0, 0),
+            (self.city_map.width//2, self.city_map.height//2),
+        ]
+        print("\nTraffic Samples:")
+        for x, y in sample_points:
+            density = self.city_map.get_traffic_density((x, y))
+            print(f"Location ({x},{y}): {density:.3f}")
+            
     def _print_final_statistics(self):
-        """Print final simulation statistics"""
+        """Print final simulation statistics with detailed wait time information"""
         stats = self.get_statistics()
         print("\nFinal Statistics:")
         print(f"Total clients: {stats['total_clients']}")
@@ -1693,22 +1703,28 @@ class uber_network:
             print(f"Average ride time: {stats['average_ride_time']:.2f}")
         if stats['total_matches'] > 0:
             print(f"Average wait time: {stats['average_wait_time']:.2f}")
+            if 'max_wait_time' in stats:
+                print(f"Maximum wait time: {stats['max_wait_time']:.2f}")
+                print(f"Minimum wait time: {stats['min_wait_time']:.2f}")
         print(f"Completion rate: {stats['completion_rate']*100:.2f}%")
-        print(f"Cancellation rate: {stats['cancellation_rate']*100:.2f}%")
-
+        
     def get_statistics(self):
-        """Get simulation statistics"""
+        """Get simulation statistics with improved wait time calculations"""
         stats = self.stats.copy()
         
         # Calculate averages
         if stats['total_completed_rides'] > 0:
             stats['average_ride_time'] = stats['total_ride_time'] / stats['total_completed_rides']
         
-        if stats['total_matches'] > 0:
+        if stats['total_matches'] > 0 and 'total_waiting_time' in stats:
             stats['average_wait_time'] = stats['total_waiting_time'] / stats['total_matches']
+            
+            if hasattr(self.stats, 'wait_times'):
+                stats['max_wait_time'] = max(self.stats['wait_times'])
+                stats['min_wait_time'] = min(self.stats['wait_times'])
         
         stats['completion_rate'] = (stats['total_completed_rides'] / stats['total_clients'] 
-                                  if stats['total_clients'] > 0 else 0)
+                                if stats['total_clients'] > 0 else 0)
         
         stats['cancellation_rate'] = (stats['total_cancellations'] / stats['total_clients']
                                     if stats['total_clients'] > 0 else 0)
