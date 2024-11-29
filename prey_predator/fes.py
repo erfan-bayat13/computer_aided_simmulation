@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-import enum
+from enum import Enum
 import heapq
 import random
 from typing import List, Optional
@@ -10,7 +10,7 @@ from predator import Predator
 from prey import Prey
 
 
-class EventType(enum):
+class EventType(Enum):
     PREY_REPRODUCTION = "PREY_REPRODUCTION"
     PREDATOR_REPRODUCTION = "PREDATOR_REPRODUCTION"
     PREDATION = "PREDATION"
@@ -126,7 +126,7 @@ class EventScheduler:
                     partner=prey
                 ))
     
-    def handle_events(self,event: Event, rates: dict):
+    def handle_event(self,event: Event, rates: dict):
         """Process an event and update the system state"""
         self.current_time = event.time
 
