@@ -106,7 +106,6 @@ class Simulation:
         return population
     
     def run_single_simulation(self) -> SimulationStatistics:
-        """Run a single simulation and collect statistics"""
         scheduler = EventScheduler()
         scheduler.population = self.initialize_population()
         stats = SimulationStatistics()
@@ -122,6 +121,11 @@ class Simulation:
         while scheduler.current_time < self.end_time:
             event = scheduler.get_next_event()
             if event is None:
+                break
+                
+            # Add a check for empty population
+            mp, fp, mr, fr = scheduler.population.get_counts()
+            if (mp + fp + mr + fr) == 0:
                 break
                 
             if event.time >= next_stats_time:

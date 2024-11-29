@@ -130,22 +130,41 @@ class EventScheduler:
         """Process an event and update the system state"""
         self.current_time = event.time
 
+        # First check if the subject/partner still exist before processing
         if event.event_type == EventType.PREY_REPRODUCTION:
-            if event.subject in (self.population.female_prey):
-                offspring = Prey.reproduce(event.subject.id, self.current_time)
-                for baby in offspring:
-                    self.population.add_animal(baby)
+            if event.subject not in self.population.female_prey:
+                return
+                
+        elif event.event_type == EventType.PREDATOR_REPRODUCTION:
+            if event.subject not in self.population.female_predators:
+                return
+                
+        elif event.event_type == EventType.PREDATION:
+            if (event.subject not in (self.population.male_predators + self.population.female_predators) or
+                event.partner not in (self.population.male_prey + self.population.female_prey)):
+                return
+                
+        elif event.event_type == EventType.PREY_DEATH:
+            if event.subject not in (self.population.male_prey + self.population.female_prey):
+                return
+                
+        elif event.event_type == EventType.PREDATOR_DEATH:
+            if event.subject not in (self.population.male_predators + self.population.female_predators):
+                return
+
+        # Process the event
+        if event.event_type == EventType.PREY_REPRODUCTION:
+            offspring = Prey.reproduce(event.subject.id, self.current_time)
+            for baby in offspring:
+                self.population.add_animal(baby)
         
         elif event.event_type == EventType.PREDATOR_REPRODUCTION:
-            if event.subject in (self.population.female_predators):
-                offspring = Predator.reproduce(event.subject.id, self.current_time)
-                for baby in offspring:
-                    self.population.add_animal(baby)
+            offspring = Predator.reproduce(event.subject.id, self.current_time)
+            for baby in offspring:
+                self.population.add_animal(baby)
         
         elif event.event_type == EventType.PREDATION:
-            if (event.subject in (self.population.male_predators + self.population.female_predators) and 
-                event.partner in (self.population.male_prey + self.population.female_prey)):
-                self.population.remove_animal(event.partner)
+            self.population.remove_animal(event.partner)
         
         elif event.event_type == EventType.PREY_DEATH:
             self.population.remove_animal(event.subject)
@@ -153,8 +172,9 @@ class EventScheduler:
         elif event.event_type == EventType.PREDATOR_DEATH:
             self.population.remove_animal(event.subject)
         
-        # Schedule new events after state update
-        self.schedule_reproduction_events(self.current_time, rates)
-        self.schedule_death_events(self.current_time, rates)
-        self.schedule_predation_events(self.current_time, rates)
-        
+        # Only schedule new events if there are still animals alive
+        mp, fp, mr, fr = self.population.get_counts()
+        if (mp + fp + mr + fr) > 0:
+            self.schedule_reproduction_events(self.current_time, rates)
+            self.schedule_death_events(self.current_time, rates)
+            self.schedule_predation_events(self.current_time, rates)
