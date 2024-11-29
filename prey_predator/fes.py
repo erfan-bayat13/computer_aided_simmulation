@@ -5,7 +5,7 @@ import random
 from typing import List, Optional
 
 from animal import Animal
-from main import PopulationState
+from population_state import PopulationState
 from predator import Predator
 from prey import Prey
 
