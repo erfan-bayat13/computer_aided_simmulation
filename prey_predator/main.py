@@ -106,34 +106,49 @@ class Simulation:
         return population
     
     def run_single_simulation(self) -> SimulationStatistics:
-        scheduler = EventScheduler()
+        print("\n=== Starting New Simulation ===")
+        scheduler = EventScheduler(self.end_time)  # Pass end_time
         scheduler.population = self.initialize_population()
         stats = SimulationStatistics()
         
-        # Schedule initial events
+        mp, fp, mr, fr = scheduler.population.get_counts()
+        print(f"Initial population - Predators(M/F): {mp}/{fp}, Prey(M/F): {mr}/{fr}")
+        
+        # Record initial state
+        stats.record_state(0, scheduler.population)
+        
+        print("\nScheduling initial events...")
         scheduler.schedule_reproduction_events(0, self.params.to_dict())
         scheduler.schedule_death_events(0, self.params.to_dict())
         scheduler.schedule_predation_events(0, self.params.to_dict())
         
-        next_stats_time = 0
+        next_stats_time = self.statistics_interval
         
-        # Main simulation loop
         while scheduler.current_time < self.end_time:
             event = scheduler.get_next_event()
             if event is None:
-                break
-                
-            # Add a check for empty population
-            mp, fp, mr, fr = scheduler.population.get_counts()
-            if (mp + fp + mr + fr) == 0:
+                print("No more events in queue!")
                 break
                 
             if event.time >= next_stats_time:
-                stats.record_state(next_stats_time, scheduler.population)
-                next_stats_time += self.statistics_interval
-                
+                # Record all stats up to current time
+                while next_stats_time <= event.time:
+                    stats.record_state(next_stats_time, scheduler.population)
+                    next_stats_time += self.statistics_interval
+                    
             scheduler.handle_event(event, self.params.to_dict())
             
+            # Check if population is extinct
+            mp, fp, mr, fr = scheduler.population.get_counts()
+            if (mp + fp + mr + fr) == 0:
+                print("Population extinct!")
+                stats.record_state(event.time, scheduler.population)
+                break
+        
+        # Record final state if needed
+        if scheduler.current_time < self.end_time:
+            stats.record_state(scheduler.current_time, scheduler.population)
+        
         return stats
     
     def run_multiple_simulations(self, num_simulations: int) -> List[SimulationStatistics]:
@@ -181,12 +196,15 @@ class SimulationAnalyzer:
     
     @staticmethod
     def plot_simulation_results(stats: SimulationStatistics, title: str = "Population Dynamics"):
-        """Plot the results of a single simulation"""
+        if not stats.times:
+            print("No data to plot!")
+            return
+            
         plt.figure(figsize=(12, 6))
         
         # Plot population counts
-        plt.plot(stats.times, stats.predator_counts, 'r-', label='Predators')
-        plt.plot(stats.times, stats.prey_counts, 'b-', label='Prey')
+        plt.plot(stats.times, stats.predator_counts, 'r-', label='Predators', linewidth=2)
+        plt.plot(stats.times, stats.prey_counts, 'b-', label='Prey', linewidth=2)
         
         plt.xlabel('Time')
         plt.ylabel('Population')
@@ -197,6 +215,7 @@ class SimulationAnalyzer:
         
         # Plot gender ratios
         plt.figure(figsize=(12, 6))
+        
         plt.subplot(1, 2, 1)
         plt.plot(stats.times, stats.male_predator_counts, 'r--', label='Male Predators')
         plt.plot(stats.times, stats.female_predator_counts, 'r:', label='Female Predators')
