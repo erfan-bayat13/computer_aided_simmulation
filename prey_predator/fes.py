@@ -34,10 +34,18 @@ class EventScheduler:
         self.population: PopulationState = PopulationState()
 
         # Population thresholds for rate adjustments
-        self.PREY_LOW_THRESHOLD = 75
-        self.PREY_HIGH_THRESHOLD = 500
-        self.PREDATOR_LOW_THRESHOLD = 5
-        self.PREDATOR_HIGH_THRESHOLD = 100
+        self.PREY_CRITICAL_THRESHOLD = 20   # Critical level - maximum reproduction boost
+        self.PREY_LOW_THRESHOLD = 50       # Low population - increased reproduction
+        self.PREY_OPTIMAL_THRESHOLD = 150  # Optimal population - normal rates
+        self.PREY_HIGH_THRESHOLD = 300     # High population - decreased reproduction
+        
+        self.PREDATOR_CRITICAL_THRESHOLD = 3  # Critical level - maximum reproduction boost
+        self.PREDATOR_LOW_THRESHOLD = 10      # Low population - increased reproduction
+        self.PREDATOR_OPTIMAL_THRESHOLD = 25  # Optimal population - normal rates
+        self.PREDATOR_HIGH_THRESHOLD = 75    # High population - decreased reproduction
+        
+        # Carrying capacity ratio (prey per predator for sustainable ecosystem)
+        self.OPTIMAL_PREY_PREDATOR_RATIO = 4.0
     
     def schedule_event(self, event: Event):
         heapq.heappush(self.future_events, event)
@@ -48,46 +56,125 @@ class EventScheduler:
     def _create_event(self, time: float, event_type: EventType, subject: Animal, partner: Optional[Animal] = None) -> Event:
         return Event(time=time, event_type=event_type, subject=subject, partner=partner)
     
-    def _calculate_prey_reproduction_modifier(self, total_prey: int) -> float:
-        """Calculate modifier for prey reproduction rate based on population"""
-        if total_prey <= self.PREY_LOW_THRESHOLD:
-            # Increase reproduction rate when population is low
-            return 2.0 - (total_prey / self.PREY_LOW_THRESHOLD)
-        elif total_prey >= self.PREY_HIGH_THRESHOLD:
-            # Decrease reproduction rate when population is high
-            return 1.0 / (1.0 + math.log(total_prey / self.PREY_HIGH_THRESHOLD + 1))
-        return 1.0
+    def _sigmoid(self, x: float, k: float = 1.0) -> float:
+        """Sigmoid function for smooth transitions"""
+        return 1 / (1 + math.exp(-k * x))
+
+    def _calculate_prey_reproduction_modifier(self, total_prey: int, total_predators: int) -> float:
+        """Calculate realistic modifier for prey reproduction rate"""
+        # Base modifier based on population size
+        if total_prey <= self.PREY_CRITICAL_THRESHOLD:
+            # Maximum reproduction rate at critical levels
+            base_modifier = 3.0
+        elif total_prey <= self.PREY_LOW_THRESHOLD:
+            # Gradually decrease from 3.0 to 1.5 as population increases
+            ratio = (total_prey - self.PREY_CRITICAL_THRESHOLD) / (self.PREY_LOW_THRESHOLD - self.PREY_CRITICAL_THRESHOLD)
+            base_modifier = 3.0 - (1.5 * ratio)
+        elif total_prey <= self.PREY_OPTIMAL_THRESHOLD:
+            # Normal reproduction rate
+            base_modifier = 1.0
+        else:
+            # Decrease reproduction as population exceeds optimal threshold
+            excess_ratio = (total_prey - self.PREY_OPTIMAL_THRESHOLD) / (self.PREY_HIGH_THRESHOLD - self.PREY_OPTIMAL_THRESHOLD)
+            base_modifier = max(0.2, 1.0 - (0.8 * self._sigmoid(excess_ratio - 0.5, k=4)))
+        
+        # Adjust based on predator pressure
+        if total_predators > 0:
+            prey_predator_ratio = total_prey / total_predators
+            if prey_predator_ratio < self.OPTIMAL_PREY_PREDATOR_RATIO:
+                # Increase reproduction when there are too many predators
+                predator_pressure_modifier = 1.0 + 0.5 * (1 - prey_predator_ratio / self.OPTIMAL_PREY_PREDATOR_RATIO)
+                base_modifier *= predator_pressure_modifier
+        
+        return base_modifier
+
+    def _calculate_predator_reproduction_modifier(self, total_predators: int, total_prey: int) -> float:
+        """Calculate realistic modifier for predator reproduction rate"""
+        # Base modifier based on population size
+        if total_predators <= self.PREDATOR_CRITICAL_THRESHOLD:
+            # Maximum reproduction rate at critical levels
+            base_modifier = 2.5
+        elif total_predators <= self.PREDATOR_LOW_THRESHOLD:
+            # Gradually decrease from 2.5 to 1.3 as population increases
+            ratio = (total_predators - self.PREDATOR_CRITICAL_THRESHOLD) / (self.PREDATOR_LOW_THRESHOLD - self.PREDATOR_CRITICAL_THRESHOLD)
+            base_modifier = 2.5 - (1.2 * ratio)
+        elif total_predators <= self.PREDATOR_OPTIMAL_THRESHOLD:
+            # Normal reproduction rate
+            base_modifier = 1.0
+        else:
+            # Decrease reproduction as population exceeds optimal threshold
+            excess_ratio = (total_predators - self.PREDATOR_OPTIMAL_THRESHOLD) / (self.PREDATOR_HIGH_THRESHOLD - self.PREDATOR_OPTIMAL_THRESHOLD)
+            base_modifier = max(0.3, 1.0 - (0.7 * self._sigmoid(excess_ratio - 0.5, k=3)))
+        
+        # Adjust based on prey availability
+        if total_prey > 0:
+            prey_predator_ratio = total_prey / total_predators
+            if prey_predator_ratio < self.OPTIMAL_PREY_PREDATOR_RATIO:
+                # Decrease reproduction when there isn't enough prey
+                food_scarcity_modifier = max(0.3, prey_predator_ratio / self.OPTIMAL_PREY_PREDATOR_RATIO)
+                base_modifier *= food_scarcity_modifier
+            elif prey_predator_ratio > self.OPTIMAL_PREY_PREDATOR_RATIO * 1.5:
+                # Slight increase in reproduction when prey is abundant
+                food_abundance_modifier = min(1.3, 1.0 + 0.3 * self._sigmoid(prey_predator_ratio / self.OPTIMAL_PREY_PREDATOR_RATIO - 1.5, k=1))
+                base_modifier *= food_abundance_modifier
+        
+        return base_modifier
+
+    def _calculate_predation_modifier(self, total_prey: int, total_predators: int) -> float:
+        """Calculate realistic modifier for predation rate"""
+        if total_prey <= self.PREY_CRITICAL_THRESHOLD:
+            # Significantly reduced predation at critical prey levels
+            base_modifier = 0.3
+        elif total_prey <= self.PREY_LOW_THRESHOLD:
+            # Gradually increase predation as prey population grows
+            ratio = (total_prey - self.PREY_CRITICAL_THRESHOLD) / (self.PREY_LOW_THRESHOLD - self.PREY_CRITICAL_THRESHOLD)
+            base_modifier = 0.3 + (0.7 * ratio)
+        elif total_prey <= self.PREY_OPTIMAL_THRESHOLD:
+            # Normal predation rate
+            base_modifier = 1.0
+        else:
+            # Increased predation when prey is abundant
+            excess_ratio = (total_prey - self.PREY_OPTIMAL_THRESHOLD) / (self.PREY_HIGH_THRESHOLD - self.PREY_OPTIMAL_THRESHOLD)
+            base_modifier = 1.0 + (0.5 * self._sigmoid(excess_ratio, k=2))
+        
+        # Adjust based on predator competition
+        if total_predators > 1:
+            prey_per_predator = total_prey / total_predators
+            if prey_per_predator < self.OPTIMAL_PREY_PREDATOR_RATIO:
+                # Increase predation effort when food is scarce
+                competition_modifier = 1.0 + 0.3 * (1 - prey_per_predator / self.OPTIMAL_PREY_PREDATOR_RATIO)
+                base_modifier *= competition_modifier
+        
+        return base_modifier
     
-    def _calculate_predator_reproduction_modifier(self, total_predators: int) -> float:
-        """Calculate modifier for predator reproduction rate based on population"""
-        if total_predators <= self.PREDATOR_LOW_THRESHOLD:
-            # Increase reproduction rate when population is low
-            return 2.0 - (total_predators / self.PREDATOR_LOW_THRESHOLD)
-        elif total_predators >= self.PREDATOR_HIGH_THRESHOLD:
-            # Decrease reproduction rate when population is high
-            return 1.0 / (1.0 + math.log(total_predators / self.PREDATOR_HIGH_THRESHOLD + 1))
-        return 1.0
-    
-    def _calculate_predation_modifier(self, total_prey: int) -> float:
-        """Calculate modifier for predation rate based on prey population"""
-        if total_prey <= self.PREY_LOW_THRESHOLD:
-            # Decrease predation rate when prey is scarce
-            return 0.5 + (total_prey / (2 * self.PREY_LOW_THRESHOLD))
-        elif total_prey >= self.PREY_HIGH_THRESHOLD:
-            # Increase predation rate when prey is abundant
-            return 1.0 + math.log(total_prey / self.PREY_HIGH_THRESHOLD + 1)
-        return 1.0
-    
+
     
     def schedule_prey_reproduction(self, current_time: float, rates: dict):
-        """Schedule prey reproduction events with dynamic rates"""
+        """Schedule prey reproduction events with realistic dynamic rates"""
         mr, fr = len(self.population.male_prey), len(self.population.female_prey)
+        mp, fp = len(self.population.male_predators), len(self.population.female_predators)
         total_prey = mr + fr
+        total_predators = mp + fp
         
         if mr * fr > 0 and self.population.female_prey:
-            modifier = self._calculate_prey_reproduction_modifier(total_prey)
-            adjusted_rate = rates['lambda1'] * modifier
-            prey_reproduction_time = current_time + random.expovariate(adjusted_rate * mr * fr)
+            # Calculate base modifier based on population size
+            if total_prey <= self.PREY_CRITICAL_THRESHOLD:
+                base_modifier = 3.0
+            elif total_prey <= self.PREY_LOW_THRESHOLD:
+                ratio = (total_prey - self.PREY_CRITICAL_THRESHOLD) / (self.PREY_LOW_THRESHOLD - self.PREY_CRITICAL_THRESHOLD)
+                base_modifier = 3.0 - (1.5 * ratio)
+            else:
+                base_modifier = 1.0
+                # Add population control when prey numbers are high
+                if total_prey > self.PREY_OPTIMAL_THRESHOLD:
+                    overpopulation_factor = min(1.0, self.PREY_OPTIMAL_THRESHOLD / total_prey)
+                    base_modifier *= overpopulation_factor
+            
+            # Calculate final rate and schedule event
+            adjusted_rate = rates['lambda1'] * base_modifier
+            # Use square root scaling to prevent quadratic explosion
+            breeding_pairs = min(mr, fr)  # Use actual breeding pairs instead of mr * fr
+            prey_reproduction_time = current_time + random.expovariate(adjusted_rate * breeding_pairs)
             
             self.schedule_event(self._create_event(
                 prey_reproduction_time,
@@ -96,14 +183,38 @@ class EventScheduler:
             ))
 
     def schedule_predator_reproduction(self, current_time: float, rates: dict):
-        """Schedule predator reproduction events with dynamic rates"""
+        """Schedule predator reproduction events with realistic dynamic rates"""
         mp, fp = len(self.population.male_predators), len(self.population.female_predators)
+        mr, fr = len(self.population.male_prey), len(self.population.female_prey)
         total_predators = mp + fp
+        total_prey = mr + fr
         
         if mp * fp > 0 and self.population.female_predators:
-            modifier = self._calculate_predator_reproduction_modifier(total_predators)
-            adjusted_rate = rates['lambda2'] * modifier
-            predator_reproduction_time = current_time + random.expovariate(adjusted_rate * mp * fp)
+            # Calculate base modifier based on population size
+            if total_predators <= self.PREDATOR_CRITICAL_THRESHOLD:
+                # Maximum reproduction rate at critical levels
+                base_modifier = 2.5
+            elif total_predators <= self.PREDATOR_LOW_THRESHOLD:
+                # Gradually decrease from 2.5 to 1.3 as population increases
+                ratio = (total_predators - self.PREDATOR_CRITICAL_THRESHOLD) / (self.PREDATOR_LOW_THRESHOLD - self.PREDATOR_CRITICAL_THRESHOLD)
+                base_modifier = 2.5 - (1.2 * ratio)
+            else:
+                # Normal reproduction rate with scaling based on prey availability
+                base_modifier = 1.0
+            
+            # Adjust based on prey availability - important for predator growth
+            if total_prey > 0:
+                prey_predator_ratio = total_prey / total_predators
+                if prey_predator_ratio > self.OPTIMAL_PREY_PREDATOR_RATIO:
+                    # Increase reproduction when prey is abundant
+                    prey_bonus = min(2.0, prey_predator_ratio / self.OPTIMAL_PREY_PREDATOR_RATIO)
+                    base_modifier *= prey_bonus
+            
+            # Calculate final rate and schedule event
+            adjusted_rate = rates['lambda2'] * base_modifier
+            # Use square root scaling to prevent quadratic explosion
+            breeding_pairs = min(mp, fp)  # Use actual breeding pairs instead of mp * fp
+            predator_reproduction_time = current_time + random.expovariate(adjusted_rate * breeding_pairs)
             
             self.schedule_event(self._create_event(
                 predator_reproduction_time,
@@ -138,12 +249,12 @@ class EventScheduler:
                 self.schedule_event(self._create_event(death_time, EventType.PREDATOR_DEATH, predator))
 
     def schedule_predation_events(self, current_time: float, rates: dict):
-        """Schedule predation events with dynamic rates"""
+        """Schedule predation events with realistic dynamic rates"""
         total_predators = len(self.population.male_predators) + len(self.population.female_predators)
         total_prey = len(self.population.male_prey) + len(self.population.female_prey)
 
         if total_predators > 0 and total_prey > 0:
-            modifier = self._calculate_predation_modifier(total_prey)
+            modifier = self._calculate_predation_modifier(total_prey, total_predators)
             adjusted_rate = rates['lambda3'] * modifier
             predation_time = current_time + random.expovariate(adjusted_rate * total_predators * total_prey)
             
@@ -177,37 +288,80 @@ class EventScheduler:
     def handle_event(self, event: Event, rates: dict):
         """Process an event and update the system state"""
         self.current_time = event.time
-        self._last_event_type = event.event_type  # Store the last event type
+        self._last_event_type = event.event_type
+        
+        # Get population counts before the event
+        old_mp, old_fp, old_mr, old_fr = self.population.get_counts()
+        old_total_predators = old_mp + old_fp
+        old_total_prey = old_mr + old_fr
         
         # Validate event subjects still exist
         all_predators = self.population.male_predators + self.population.female_predators
         all_prey = self.population.male_prey + self.population.female_prey
         
-        if not (
+        event_valid = (
             (event.event_type == EventType.PREY_REPRODUCTION and event.subject in self.population.female_prey) or
             (event.event_type == EventType.PREDATOR_REPRODUCTION and event.subject in self.population.female_predators) or
             (event.event_type == EventType.PREDATION and event.subject in all_predators and event.partner in all_prey) or
             (event.event_type == EventType.PREY_DEATH and event.subject in all_prey) or
             (event.event_type == EventType.PREDATOR_DEATH and event.subject in all_predators)
-        ):
-            return
+        )
 
-        # Process valid event
-        if event.event_type == EventType.PREY_REPRODUCTION:
-            for baby in Prey.reproduce(self.current_time):
-                self.population.add_animal(baby)
-        elif event.event_type == EventType.PREDATOR_REPRODUCTION:
-            for baby in Predator.reproduce(self.current_time):
-                self.population.add_animal(baby)
-        elif event.event_type == EventType.PREDATION:
-            self.population.remove_animal(event.partner)
-        elif event.event_type == EventType.PREY_DEATH:
-            self.population.remove_animal(event.subject)
-        elif event.event_type == EventType.PREDATOR_DEATH:
-            self.population.remove_animal(event.subject)
+        if event_valid:
+            # Process valid event
+            if event.event_type == EventType.PREY_REPRODUCTION:
+                for baby in Prey.reproduce(self.current_time):
+                    self.population.add_animal(baby)
+            elif event.event_type == EventType.PREDATOR_REPRODUCTION:
+                for baby in Predator.reproduce(self.current_time):
+                    self.population.add_animal(baby)
+            elif event.event_type == EventType.PREDATION:
+                self.population.remove_animal(event.partner)
+            elif event.event_type == EventType.PREY_DEATH:
+                self.population.remove_animal(event.subject)
+            elif event.event_type == EventType.PREDATOR_DEATH:
+                self.population.remove_animal(event.subject)
 
-        # Schedule new events if population isn't extinct
-        if sum(self.population.get_counts()) > 0:
+        # Get new population counts
+        new_mp, new_fp, new_mr, new_fr = self.population.get_counts()
+        new_total_predators = new_mp + new_fp
+        new_total_prey = new_mr + new_fr
+        
+        # Calculate population change thresholds
+        prey_change_ratio = abs(new_total_prey - old_total_prey) / max(old_total_prey, 1)
+        pred_change_ratio = abs(new_total_predators - old_total_predators) / max(old_total_predators, 1)
+        
+        # Reschedule events if:
+        # 1. Population changed significantly (>10% change)
+        # 2. Current event was invalid
+        # 3. Population is near critical thresholds
+        should_reschedule = (
+            prey_change_ratio > 0.1 or 
+            pred_change_ratio > 0.1 or 
+            not event_valid or
+            new_total_prey <= self.PREY_CRITICAL_THRESHOLD * 1.5 or
+            new_total_predators <= self.PREDATOR_CRITICAL_THRESHOLD * 1.5
+        )
+        
+        if should_reschedule:
+            # Clear future events of the same type
+            self.future_events = [e for e in self.future_events 
+                                if e.event_type != event.event_type]
+            # Reschedule this type of event
+            if new_total_prey > 0 and new_total_predators > 0:
+                if event.event_type == EventType.PREY_REPRODUCTION:
+                    self.schedule_prey_reproduction(self.current_time, rates)
+                elif event.event_type == EventType.PREDATOR_REPRODUCTION:
+                    self.schedule_predator_reproduction(self.current_time, rates)
+                elif event.event_type == EventType.PREDATION:
+                    self.schedule_predation_events(self.current_time, rates)
+                elif event.event_type == EventType.PREY_DEATH:
+                    self.schedule_prey_deaths(self.current_time, rates)
+                elif event.event_type == EventType.PREDATOR_DEATH:
+                    self.schedule_predator_deaths(self.current_time, rates)
+        
+        # Always schedule new events if population isn't extinct
+        elif new_total_prey > 0 and new_total_predators > 0:
             self.schedule_reproduction_events(self.current_time, rates)
             self.schedule_death_events(self.current_time, rates)
             self.schedule_predation_events(self.current_time, rates)
