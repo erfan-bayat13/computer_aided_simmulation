@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 import heapq
+import math
 import random
 from typing import List, Optional
 
@@ -31,6 +32,12 @@ class EventScheduler:
         self.current_time: float = 0
         self.future_events: List[Event] = []
         self.population: PopulationState = PopulationState()
+
+        # Population thresholds for rate adjustments
+        self.PREY_LOW_THRESHOLD = 75
+        self.PREY_HIGH_THRESHOLD = 500
+        self.PREDATOR_LOW_THRESHOLD = 5
+        self.PREDATOR_HIGH_THRESHOLD = 100
     
     def schedule_event(self, event: Event):
         heapq.heappush(self.future_events, event)
@@ -41,11 +48,47 @@ class EventScheduler:
     def _create_event(self, time: float, event_type: EventType, subject: Animal, partner: Optional[Animal] = None) -> Event:
         return Event(time=time, event_type=event_type, subject=subject, partner=partner)
     
+    def _calculate_prey_reproduction_modifier(self, total_prey: int) -> float:
+        """Calculate modifier for prey reproduction rate based on population"""
+        if total_prey <= self.PREY_LOW_THRESHOLD:
+            # Increase reproduction rate when population is low
+            return 2.0 - (total_prey / self.PREY_LOW_THRESHOLD)
+        elif total_prey >= self.PREY_HIGH_THRESHOLD:
+            # Decrease reproduction rate when population is high
+            return 1.0 / (1.0 + math.log(total_prey / self.PREY_HIGH_THRESHOLD + 1))
+        return 1.0
+    
+    def _calculate_predator_reproduction_modifier(self, total_predators: int) -> float:
+        """Calculate modifier for predator reproduction rate based on population"""
+        if total_predators <= self.PREDATOR_LOW_THRESHOLD:
+            # Increase reproduction rate when population is low
+            return 2.0 - (total_predators / self.PREDATOR_LOW_THRESHOLD)
+        elif total_predators >= self.PREDATOR_HIGH_THRESHOLD:
+            # Decrease reproduction rate when population is high
+            return 1.0 / (1.0 + math.log(total_predators / self.PREDATOR_HIGH_THRESHOLD + 1))
+        return 1.0
+    
+    def _calculate_predation_modifier(self, total_prey: int) -> float:
+        """Calculate modifier for predation rate based on prey population"""
+        if total_prey <= self.PREY_LOW_THRESHOLD:
+            # Decrease predation rate when prey is scarce
+            return 0.5 + (total_prey / (2 * self.PREY_LOW_THRESHOLD))
+        elif total_prey >= self.PREY_HIGH_THRESHOLD:
+            # Increase predation rate when prey is abundant
+            return 1.0 + math.log(total_prey / self.PREY_HIGH_THRESHOLD + 1)
+        return 1.0
+    
+    
     def schedule_prey_reproduction(self, current_time: float, rates: dict):
-        """Schedule prey reproduction events"""
+        """Schedule prey reproduction events with dynamic rates"""
         mr, fr = len(self.population.male_prey), len(self.population.female_prey)
-        if mr * fr > 0 and self.population.female_prey:  # If both male and female prey exist
-            prey_reproduction_time = current_time + random.expovariate(rates['lambda1'] * mr * fr)
+        total_prey = mr + fr
+        
+        if mr * fr > 0 and self.population.female_prey:
+            modifier = self._calculate_prey_reproduction_modifier(total_prey)
+            adjusted_rate = rates['lambda1'] * modifier
+            prey_reproduction_time = current_time + random.expovariate(adjusted_rate * mr * fr)
+            
             self.schedule_event(self._create_event(
                 prey_reproduction_time,
                 EventType.PREY_REPRODUCTION,
@@ -53,10 +96,15 @@ class EventScheduler:
             ))
 
     def schedule_predator_reproduction(self, current_time: float, rates: dict):
-        """Schedule predator reproduction events"""
+        """Schedule predator reproduction events with dynamic rates"""
         mp, fp = len(self.population.male_predators), len(self.population.female_predators)
-        if mp * fp > 0 and self.population.female_predators:  # If both male and female predators exist
-            predator_reproduction_time = current_time + random.expovariate(rates['lambda2'] * mp * fp)
+        total_predators = mp + fp
+        
+        if mp * fp > 0 and self.population.female_predators:
+            modifier = self._calculate_predator_reproduction_modifier(total_predators)
+            adjusted_rate = rates['lambda2'] * modifier
+            predator_reproduction_time = current_time + random.expovariate(adjusted_rate * mp * fp)
+            
             self.schedule_event(self._create_event(
                 predator_reproduction_time,
                 EventType.PREDATOR_REPRODUCTION,
@@ -90,12 +138,15 @@ class EventScheduler:
                 self.schedule_event(self._create_event(death_time, EventType.PREDATOR_DEATH, predator))
 
     def schedule_predation_events(self, current_time: float, rates: dict):
-        """Schedule predation events"""
+        """Schedule predation events with dynamic rates"""
         total_predators = len(self.population.male_predators) + len(self.population.female_predators)
         total_prey = len(self.population.male_prey) + len(self.population.female_prey)
 
         if total_predators > 0 and total_prey > 0:
-            predation_time = current_time + random.expovariate(rates['lambda3'] * total_predators * total_prey)
+            modifier = self._calculate_predation_modifier(total_prey)
+            adjusted_rate = rates['lambda3'] * modifier
+            predation_time = current_time + random.expovariate(adjusted_rate * total_predators * total_prey)
+            
             predator = random.choice(self.population.male_predators + self.population.female_predators)
             prey = random.choice(self.population.male_prey + self.population.female_prey)
             self.schedule_event(self._create_event(predation_time, EventType.PREDATION, predator, prey))
