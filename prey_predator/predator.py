@@ -4,20 +4,25 @@ from animal import Animal, Gender
 
 class Predator(Animal):
     """Class representing a predator animal in the simulation"""
-    def __init__(self, id: int, gender: Gender, birth_time: float):
-        super().__init__(id, gender, birth_time)
+    _next_id = 1  # Static counter for IDs
+    
+    def __init__(self, gender: Gender, birth_time: float):
+        super().__init__(Predator._next_id, gender, birth_time)
+        Predator._next_id += 1
         
     @classmethod
-    def reproduce(cls, parent_id: int, current_time: float) -> List['Predator']:
+    def reproduce(cls, current_time: float) -> List['Predator']:
         """Create 1-5 new predators with random gender"""
-        num_offspring = random.randint(1, 5)
+        num_offspring = random.randint(1, 3)
         offspring = []
         
-        for i in range(num_offspring):
+        for _ in range(num_offspring):
             gender = random.choice(list(Gender))
-            new_id = parent_id * 1000 + i  # Hierarchical ID system
-            offspring.append(cls(new_id, gender, current_time))
+            offspring.append(cls(gender, current_time))
             
         return offspring
 
-    
+    @classmethod
+    def reset_id_counter(cls):
+        """Reset the ID counter to 1"""
+        cls._next_id = 1

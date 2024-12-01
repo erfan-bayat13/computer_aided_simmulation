@@ -85,29 +85,28 @@ class Simulation:
     def initialize_population(self) -> PopulationState:
         """Create initial population"""
         population = PopulationState()
-        current_id = 1
+        
+        # Reset ID counters
+        Predator.reset_id_counter()
+        Prey.reset_id_counter()
         
         # Add initial predators
         for _ in range(self.initial_population.get('male_predators', 0)):
-            population.add_animal(Predator(current_id, Gender.MALE, 0))
-            current_id += 1
+            population.add_animal(Predator(Gender.MALE, 0))
         for _ in range(self.initial_population.get('female_predators', 0)):
-            population.add_animal(Predator(current_id, Gender.FEMALE, 0))
-            current_id += 1
+            population.add_animal(Predator(Gender.FEMALE, 0))
             
         # Add initial prey
         for _ in range(self.initial_population.get('male_prey', 0)):
-            population.add_animal(Prey(current_id, Gender.MALE, 0))
-            current_id += 1
+            population.add_animal(Prey(Gender.MALE, 0))
         for _ in range(self.initial_population.get('female_prey', 0)):
-            population.add_animal(Prey(current_id, Gender.FEMALE, 0))
-            current_id += 1
+            population.add_animal(Prey(Gender.FEMALE, 0))
             
         return population
     
     def run_single_simulation(self) -> SimulationStatistics:
         print("\n=== Starting New Simulation ===")
-        scheduler = EventScheduler(self.end_time)  # Pass end_time
+        scheduler = EventScheduler()  
         scheduler.population = self.initialize_population()
         stats = SimulationStatistics()
         
@@ -125,7 +124,10 @@ class Simulation:
         next_stats_time = self.statistics_interval
         
         while scheduler.current_time < self.end_time:
+            print(f"\nCurrent time: {scheduler.current_time}")
+            print(f"population: {scheduler.population.get_counts()}")
             event = scheduler.get_next_event()
+            print(f"Next event: {event.event_type} at time {event.time}")
             if event is None:
                 print("No more events in queue!")
                 break
@@ -140,6 +142,14 @@ class Simulation:
             
             # Check if population is extinct
             mp, fp, mr, fr = scheduler.population.get_counts()
+            if (mp + fp) == 0:
+                print("Predators extinct!")
+                stats.record_state(event.time, scheduler.population)
+                break
+            if (fr + mr) == 0:
+                print("Prey extinct!")
+                stats.record_state(event.time, scheduler.population)
+                break
             if (mp + fp + mr + fr) == 0:
                 print("Population extinct!")
                 stats.record_state(event.time, scheduler.population)
