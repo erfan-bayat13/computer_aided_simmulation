@@ -20,7 +20,8 @@ class city_map:
         """
         self.width, self.height = grid_size
         self.road_network = self._create_road_network()
-        self.traffic_density = self._initialize_traffic(num_hotspots)
+        self.traffic_density = defaultdict(lambda: 0.1) 
+        self._initialize_traffic(num_hotspots)
         self.base_traffic_density = self.traffic_density.copy()  # Store initial state
         self.current_traffic_density = self.traffic_density.copy()
         self.hotspots = []
@@ -58,7 +59,10 @@ class city_map:
     
     def _initialize_traffic(self, num_hotspots):
         """Initialize traffic density map with hotspots"""
-        density = defaultdict(lambda: 0.1)
+        # Initialize all positions with base traffic
+        for x in range(self.width):
+            for y in range(self.height):
+                self.traffic_density[(x, y)] = 0.1
         
         hotspots = []
         min_distance = min(self.width, self.height) // (num_hotspots + 1)
@@ -79,14 +83,12 @@ class city_map:
                         if 0 <= pos_x < self.width and 0 <= pos_y < self.height:
                             distance = abs(dx) + abs(dy)
                             if distance == 0:
-                                density[(pos_x, pos_y)] = 0.9
+                                self.traffic_density[(pos_x, pos_y)] = 0.9
                             elif distance == 1:
-                                density[(pos_x, pos_y)] = 0.7
+                                self.traffic_density[(pos_x, pos_y)] = 0.7
                             else:
-                                density[(pos_x, pos_y)] = 0.4
-        
-        return dict(density)
-    
+                                self.traffic_density[(pos_x, pos_y)] = 0.4
+            
     def update_traffic(self, current_time: float):
         """
         Update traffic conditions with more noticeable changes for shorter simulations.
@@ -95,32 +97,41 @@ class city_map:
             current_time (float): Current simulation time
         """
         # Make a copy of the current traffic state
-        new_traffic = self.traffic_density.copy()
+        new_traffic = defaultdict(lambda: 0.1)  # Use defaultdict for new traffic
         
         # Calculate time-based factor (oscillating pattern)
-        # Using shorter time period for more noticeable changes
         time_factor = 1.0 + 0.3 * math.sin(current_time / 100.0)  # Shorter cycle
         
-        # Apply time factor to all locations
-        for pos in new_traffic:
-            # Apply time-based changes
-            new_traffic[pos] = new_traffic[pos] * time_factor
-            
-            # Add some random variation
-            random_factor = 1.0 + random.uniform(-0.1, 0.1)
-            new_traffic[pos] *= random_factor
-            
-            # Ensure values stay within bounds
-            new_traffic[pos] = max(0.1, min(0.9, new_traffic[pos]))
+        # Apply time factor to all grid positions
+        for x in range(self.width):
+            for y in range(self.height):
+                pos = (x, y)
+                # Get current traffic with default value
+                current_value = self.traffic_density[pos]
+                
+                # Apply time-based changes
+                new_value = current_value * time_factor
+                
+                # Add some random variation
+                random_factor = 1.0 + random.uniform(-0.1, 0.1)
+                new_value *= random_factor
+                
+                # Ensure values stay within bounds
+                new_value = max(0.1, min(0.9, new_value))
+                
+                # Store the new value
+                new_traffic[pos] = new_value
         
         # Update the traffic state
         self.traffic_density = new_traffic
         
-        # Print some debug info
-        sample_pos = (self.width//2, self.height//2)  # Center of map
+        # Print debug info for center position
+        center_x = self.width // 2
+        center_y = self.height // 2
+        center_pos = (center_x, center_y)
         print(f"\nTraffic Update at time {current_time:.1f}:")
         print(f"Time factor: {time_factor:.3f}")
-        print(f"Center traffic: {self.traffic_density[sample_pos]:.3f}")
+        print(f"Center traffic: {self.traffic_density[center_pos]:.3f}")
         
     def _get_time_factor(self) -> float:
         hour = self.time_of_day
@@ -247,8 +258,7 @@ class city_map:
         """
         Get traffic density at a specific location
         """
-        x, y = location
-        return self.current_traffic_density.get((x, y), 0.1)
+        return self.traffic_density[location]
     
     def get_neighbors(self, location):
         """Get all valid neighboring locations"""
