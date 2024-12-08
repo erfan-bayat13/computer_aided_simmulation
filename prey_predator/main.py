@@ -48,10 +48,24 @@ class SimulationStatistics:
         self.female_predator_counts: List[int] = []
         self.male_prey_counts: List[int] = []
         self.female_prey_counts: List[int] = []
+
+        self.prey_predator_ratios = []
+        self.predator_growth_rates = []
+        self.prey_growth_rates = []
+        self.gender_ratios_predators = []
+        self.gender_ratios_prey = []
+        self.total_biomass = []  # total population
+    
+    def calculate_growth_rate(self, current, previous):
+        if previous == 0:
+            return 0
+        return (current - previous) / previous
     
     def record_state(self, time: float, population: PopulationState):
         """Record the current state of the simulation"""
         mp, fp, mr, fr = population.get_counts()
+        total_predators = mp + fp
+        total_prey = mr + fr
         # Verify all data is being recorded consistently
         self.times.append(time)
         self.male_predator_counts.append(mp)
@@ -60,6 +74,30 @@ class SimulationStatistics:
         self.female_prey_counts.append(fr)
         self.predator_counts.append(mp + fp)
         self.prey_counts.append(mr + fr)
+
+        # Prey/Predator ratio
+        ratio = total_prey / total_predators if total_predators > 0 else float('inf')
+        self.prey_predator_ratios.append(ratio)
+
+        # Growth rates
+        if len(self.predator_counts) > 1:
+            pred_growth = self.calculate_growth_rate(total_predators, self.predator_counts[-2])
+            prey_growth = self.calculate_growth_rate(total_prey, self.prey_counts[-2])
+        else:
+            pred_growth = 0
+            prey_growth = 0
+            
+        self.predator_growth_rates.append(pred_growth)
+        self.prey_growth_rates.append(prey_growth)
+
+        # Gender ratios
+        pred_gender_ratio = mp / fp if fp > 0 else float('inf')
+        prey_gender_ratio = mr / fr if fr > 0 else float('inf')
+        self.gender_ratios_predators.append(pred_gender_ratio)
+        self.gender_ratios_prey.append(prey_gender_ratio)
+        
+        # Total biomass
+        self.total_biomass.append(total_predators + total_prey)
     
     def to_dataframe(self) -> pd.DataFrame:
         """Convert statistics to a pandas DataFrame"""
@@ -70,7 +108,13 @@ class SimulationStatistics:
             'male_predators': self.male_predator_counts,
             'female_predators': self.female_predator_counts,
             'male_prey': self.male_prey_counts,
-            'female_prey': self.female_prey_counts
+            'female_prey': self.female_prey_counts,
+            'prey_predator_ratio': self.prey_predator_ratios,
+            'predator_growth_rate': self.predator_growth_rates,
+            'prey_growth_rate': self.prey_growth_rates,
+            'predator_gender_ratio': self.gender_ratios_predators,
+            'prey_gender_ratio': self.gender_ratios_prey,
+            'total_biomass': self.total_biomass
         })
     
 class Simulation:
@@ -185,23 +229,28 @@ class SimulationAnalyzer:
         # Group by time and calculate statistics
         grouped = combined_df.groupby('time')
         means = grouped.mean()
+
+        metrics = ['predators', 'prey', 'prey_predator_ratio', 
+                  'predator_growth_rate', 'prey_growth_rate',
+                  'predator_gender_ratio', 'prey_gender_ratio', 
+                  'total_biomass']
         
         # Calculate confidence intervals
         ci_results = {}
-        for column in ['predators', 'prey']:
+        for metric in metrics:
             ci_lower = []
             ci_upper = []
             for time in means.index:
-                values = combined_df[combined_df['time'] == time][column]
-                ci = stats.t.interval(confidence_level, len(values)-1, 
-                                    loc=np.mean(values), 
+                values = combined_df[combined_df['time'] == time][metric]
+                ci = stats.t.interval(confidence_level, len(values)-1,
+                                    loc=np.mean(values),
                                     scale=stats.sem(values))
                 ci_lower.append(ci[0])
                 ci_upper.append(ci[1])
-            
-            ci_results[f'{column}_mean'] = means[column]
-            ci_results[f'{column}_ci_lower'] = ci_lower
-            ci_results[f'{column}_ci_upper'] = ci_upper
+                
+            ci_results[f'{metric}_mean'] = means[metric]
+            ci_results[f'{metric}_ci_lower'] = ci_lower
+            ci_results[f'{metric}_ci_upper'] = ci_upper
             
         return pd.DataFrame(ci_results, index=means.index)
     
