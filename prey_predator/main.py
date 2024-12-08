@@ -7,7 +7,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from animal import Gender
-from fes import EventScheduler
+from fes import Event, EventScheduler, EventType
 from population_state import PopulationState
 from predator import Predator
 from prey import Prey
@@ -52,6 +52,7 @@ class SimulationStatistics:
     def record_state(self, time: float, population: PopulationState):
         """Record the current state of the simulation"""
         mp, fp, mr, fr = population.get_counts()
+        # Verify all data is being recorded consistently
         self.times.append(time)
         self.male_predator_counts.append(mp)
         self.female_predator_counts.append(fp)
@@ -245,7 +246,90 @@ class SimulationAnalyzer:
         plt.grid(True)
         plt.tight_layout()
         plt.show()
-    
+
+    @staticmethod
+    def plot_population_ratio(stats: SimulationStatistics, title: str = "Population Ratio Analysis"):
+        """Plot the prey-to-predator ratio over time"""
+        ratios = [p/pr if pr > 0 else float('inf') 
+                 for p, pr in zip(stats.prey_counts, stats.predator_counts)]
+        
+        plt.figure(figsize=(12, 6))
+        plt.plot(stats.times, ratios, 'g-', label='Prey/Predator Ratio')
+        plt.xlabel('Time')
+        plt.ylabel('Ratio')
+        plt.title(title)
+        plt.grid(True)
+        plt.legend()
+        plt.show()
+
+    @staticmethod
+    def plot_phase_space(stats: SimulationStatistics, title: str = "Phase Space Analysis"):
+        """Create a phase space plot of predator vs prey populations with trajectory lines"""
+        plt.figure(figsize=(10, 10))
+        
+        # Plot the trajectory line to show the evolution of the system
+        plt.plot(stats.predator_counts, stats.prey_counts, 'b-', alpha=0.5, 
+                label='Population Trajectory')
+        
+        # Plot points with reduced size and transparency
+        plt.scatter(stats.predator_counts, stats.prey_counts, c='k', s=20, alpha=0.3)
+        
+        # Add arrows to show direction of evolution
+        for i in range(0, len(stats.times)-1, 20):  # Add arrows every 20 points
+            if i+1 < len(stats.predator_counts):
+                plt.arrow(stats.predator_counts[i], stats.prey_counts[i],
+                        (stats.predator_counts[i+1] - stats.predator_counts[i])*0.2,
+                        (stats.prey_counts[i+1] - stats.prey_counts[i])*0.2,
+                        head_width=1, head_length=1, fc='r', ec='r', alpha=0.5)
+        
+        plt.xlabel('Predator Population')
+        plt.ylabel('Prey Population')
+        plt.title(title)
+        plt.grid(True)
+        plt.legend()
+        
+        # Set reasonable axis limits based on data
+        max_pred = max(stats.predator_counts)
+        max_prey = max(stats.prey_counts)
+        plt.xlim(0, max_pred * 1.1)
+        plt.ylim(0, max_prey * 1.1)
+        
+        plt.show()
+
+    @staticmethod
+    def plot_population_events(event_records: List[Event], title: str = "Population Events Analysis"):
+        """Plot frequency of different population events over time"""
+        events_df = pd.DataFrame(event_records)
+        event_counts = events_df.groupby(['time', 'event_type']).size().unstack()
+        
+        plt.figure(figsize=(12, 6))
+        for event_type in EventType:
+            if event_type.name in event_counts.columns:
+                plt.plot(event_counts.index, event_counts[event_type.name], 
+                        label=event_type.name)
+        
+        plt.xlabel('Time')
+        plt.ylabel('Event Frequency')
+        plt.title(title)
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    def analyze_complete_simulation(stats: SimulationStatistics, title_prefix: str = "Simulation Analysis"):
+        """Run a complete analysis with all available plots"""
+        # Original population dynamics plot
+        SimulationAnalyzer.plot_simulation_results(stats, f"{title_prefix} - Basic Population Dynamics")
+        
+        # New ratio analysis
+        SimulationAnalyzer.plot_population_ratio(stats, f"{title_prefix} - Population Ratio")
+        
+        # Phase space analysis
+        SimulationAnalyzer.plot_phase_space(stats, f"{title_prefix} - Phase Space")
+        
+        # Add population events plot if event data is available
+        if hasattr(stats, 'event_records'):
+            SimulationAnalyzer.plot_population_events(stats.event_records, f"{title_prefix} - Event Analysis")
+        
     @staticmethod
     def plot_confidence_intervals(ci_data: pd.DataFrame, title: str = "Population Dynamics with Confidence Intervals"):
         """Plot population means with confidence intervals"""
