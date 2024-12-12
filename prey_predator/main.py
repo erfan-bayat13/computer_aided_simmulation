@@ -132,6 +132,60 @@ def run_multiple_simulations(params: SimulationParameters,
         all_stats.append(stats)
     return all_stats
 
+def calculate_confidence_intervals(all_stats: List[SimulationStatistics], 
+                                confidence_level: float = 0.95) -> pd.DataFrame:
+    """Calculate confidence intervals for population counts"""
+    # Find the minimum length among all time series
+    min_length = min(len(stats.times) for stats in all_stats)
+    
+    # Create a list to store all trajectories
+    predator_trajectories = []
+    prey_trajectories = []
+    times = []
+    
+    # Collect trajectories up to the minimum length
+    for stats in all_stats:
+        predator_trajectories.append(stats.predator_counts[:min_length])
+        prey_trajectories.append(stats.prey_counts[:min_length])
+        if not times:  # Only take times from first simulation
+            times = stats.times[:min_length]
+    
+    # Convert to numpy arrays for easier computation
+    predator_array = np.array(predator_trajectories)
+    prey_array = np.array(prey_trajectories)
+    
+    # Calculate means
+    predator_means = np.mean(predator_array, axis=0)
+    prey_means = np.mean(prey_array, axis=0)
+    
+    # Calculate standard errors using scipy.stats
+    from scipy import stats as scipy_stats
+    predator_se = scipy_stats.sem(predator_array, axis=0)
+    prey_se = scipy_stats.sem(prey_array, axis=0)
+    
+    # Calculate confidence intervals
+    df = len(all_stats) - 1  # degrees of freedom
+    t_value = scipy_stats.t.ppf((1 + confidence_level) / 2, df)
+    
+    predator_ci_lower = predator_means - t_value * predator_se
+    predator_ci_upper = predator_means + t_value * predator_se
+    prey_ci_lower = prey_means - t_value * prey_se
+    prey_ci_upper = prey_means + t_value * prey_se
+    
+    # Create DataFrame with results
+    ci_data = pd.DataFrame({
+        'time': times,
+        'predators_mean': predator_means,
+        'predators_ci_lower': predator_ci_lower,
+        'predators_ci_upper': predator_ci_upper,
+        'prey_mean': prey_means,
+        'prey_ci_lower': prey_ci_lower,
+        'prey_ci_upper': prey_ci_upper
+    })
+    
+    return ci_data.set_index('time')
+
+
 def plot_simulation_results(stats: SimulationStatistics, title: str = "Population Dynamics"):
     """Plot the results of a single simulation"""
     plt.figure(figsize=(12, 6))
@@ -170,6 +224,64 @@ def plot_simulation_results(stats: SimulationStatistics, title: str = "Populatio
     plt.tight_layout()
     plt.show()
 
+
+def plot_confidence_intervals(ci_data: pd.DataFrame, title: str = "Population Dynamics with Confidence Intervals"):
+    """Plot population means with confidence intervals"""
+    plt.figure(figsize=(12, 6))
+    
+    # Plot predator confidence intervals
+    plt.fill_between(ci_data.index, 
+                    ci_data['predators_ci_lower'].clip(0),  # prevent negative values
+                    ci_data['predators_ci_upper'],
+                    color='r', alpha=0.2)
+    plt.plot(ci_data.index, ci_data['predators_mean'], 'r-', label='Predators')
+    
+    # Plot prey confidence intervals
+    plt.fill_between(ci_data.index,
+                    ci_data['prey_ci_lower'].clip(0),  # prevent negative values
+                    ci_data['prey_ci_upper'],
+                    color='b', alpha=0.2)
+    plt.plot(ci_data.index, ci_data['prey_mean'], 'b-', label='Prey')
+    
+    plt.xlabel('Time')
+    plt.ylabel('Population')
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+def plot_all_simulations(all_stats: List[SimulationStatistics], ci_data: pd.DataFrame, 
+                        title: str = "Population Dynamics - All Simulations"):
+    """Plot all simulation trajectories with confidence intervals"""
+    plt.figure(figsize=(12, 6))
+    
+    # Plot individual trajectories with low alpha
+    for stats in all_stats:
+        plt.plot(stats.times, stats.predator_counts, 'r-', alpha=0.1)
+        plt.plot(stats.times, stats.prey_counts, 'b-', alpha=0.1)
+    
+    # Plot means with confidence intervals
+    plt.fill_between(ci_data.index, 
+                    ci_data['predators_ci_lower'].clip(0),
+                    ci_data['predators_ci_upper'],
+                    color='r', alpha=0.2)
+    plt.plot(ci_data.index, ci_data['predators_mean'], 'r-', 
+             label='Predators (mean)', linewidth=2)
+    
+    plt.fill_between(ci_data.index,
+                    ci_data['prey_ci_lower'].clip(0),
+                    ci_data['prey_ci_upper'],
+                    color='b', alpha=0.2)
+    plt.plot(ci_data.index, ci_data['prey_mean'], 'b-', 
+             label='Prey (mean)', linewidth=2)
+    
+    plt.xlabel('Time')
+    plt.ylabel('Population')
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
 if __name__ == "__main__":
     # Set simulation parameters
     params = SimulationParameters(
@@ -192,6 +304,24 @@ if __name__ == "__main__":
         'female_prey': 30
     }
     
-    # Simple single simulation
-    stats = run_simulation(params, initial_population, end_time=100.0)
-    plot_simulation_results(stats)
+    # Run multiple simulations
+    num_simulations = 10
+    all_stats = run_multiple_simulations(
+        params, 
+        initial_population, 
+        end_time=100.0, 
+        num_simulations=num_simulations,
+        statistics_interval=0.5
+    )
+
+    # Run multiple simulations
+    all_stats = run_multiple_simulations(params, initial_population, end_time=100.0, num_simulations=10)
+
+    # Calculate confidence intervals
+    ci_data = calculate_confidence_intervals(all_stats)
+
+    # Plot just the confidence intervals
+    plot_confidence_intervals(ci_data)
+
+    # Or plot all trajectories with confidence intervals
+    plot_all_simulations(all_stats, ci_data)
