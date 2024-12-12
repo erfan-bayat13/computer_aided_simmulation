@@ -120,16 +120,26 @@ class EventScheduler:
             self.schedule_event(self._create_event(time, EventType.PREDATION, predator, prey))
 
         # Schedule natural deaths
-        for prey in self.population.male_prey + self.population.female_prey:
-            death_rate = base_rates['mu1'] * (1 + rates['alpha'] * max(0, total_prey/rates['K1'] - 1))
-            time = self.current_time + random.expovariate(death_rate)
-            self.schedule_event(self._create_event(time, EventType.PREY_DEATH, prey))
+        if total_prey > 0:
+            for prey in self.population.male_prey + self.population.female_prey:
+                death_rate = base_rates['mu1'] * (1 + rates['alpha'] * max(0, total_prey/rates['K1'] - 1))
+                time = self.current_time + random.expovariate(death_rate)
+                self.schedule_event(self._create_event(time, EventType.PREY_DEATH, prey))
 
-        for predator in self.population.male_predators + self.population.female_predators:
-            prey_pred_ratio = total_prey/total_predators if total_predators > 0 else 0
-            death_rate = base_rates['mu2'] * (1 + rates['beta'] * max(0, rates['K2']/prey_pred_ratio - 1))
-            time = self.current_time + random.expovariate(death_rate)
-            self.schedule_event(self._create_event(time, EventType.PREDATOR_DEATH, predator))
+        if total_predators > 0:
+            for predator in self.population.male_predators + self.population.female_predators:
+                if total_prey == 0:
+                    # Maximum death rate when no prey available
+                    death_rate = base_rates['mu2'] * (1 + rates['beta'] * rates['K2'])
+                else:
+                    prey_pred_ratio = total_prey / total_predators
+                    if prey_pred_ratio < rates['K2']:
+                        death_rate = base_rates['mu2'] * (1 + rates['beta'] * (rates['K2']/max(prey_pred_ratio, 1e-10) - 1))
+                    else:
+                        death_rate = base_rates['mu2']
+                
+                time = self.current_time + random.expovariate(death_rate)
+                self.schedule_event(self._create_event(time, EventType.PREDATOR_DEATH, predator))
 
     def handle_event(self, event: Event, rates: dict):
         """Process an event and update the system state"""

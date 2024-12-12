@@ -285,24 +285,23 @@ def plot_all_simulations(all_stats: List[SimulationStatistics], ci_data: pd.Data
 if __name__ == "__main__":
     # Set simulation parameters
     params = SimulationParameters(
-        lambda1=0.4,  # prey reproduction rate
-        lambda2=0.2,  # predator reproduction rate
-        lambda3=0.01, # predation rate
-        mu1=0.2,      # prey death rate
-        mu2=0.2,      # predator death rate
-        K1=200,       # prey population threshold
-        K2=4.0,       # prey/predator ratio threshold
-        alpha=0.01,   # prey competition coefficient
-        beta=0.05     # predator competition coefficient
-    )
-    
-    # Set initial population
+    lambda1=0.35,     # Reduced prey reproduction
+    lambda2=0.75,     # Keep high predator reproduction
+    lambda3=0.002,    # Significantly increase predation rate
+    mu1=0.15,        # Increase prey mortality
+    mu2=0.05,        # Keep low predator mortality
+    K1=1000,         # Lower carrying capacity
+    K2=4.0,          # More aggressive prey/predator ratio
+    alpha=0.30,      # Increase competition pressure
+    beta=0.15
+)
+
     initial_population = {
-        'male_predators': 10,
-        'female_predators': 10,
-        'male_prey': 30,
-        'female_prey': 30
-    }
+    'male_predators': 200,
+    'female_predators': 150,
+    'male_prey': 800,
+    'female_prey': 950
+}
     
     # Run multiple simulations
     num_simulations = 10
@@ -314,14 +313,17 @@ if __name__ == "__main__":
         statistics_interval=0.5
     )
 
+    stats = run_simulation(params, initial_population, end_time=100.0)
+    plot_simulation_results(stats)
+
     # Run multiple simulations
-    all_stats = run_multiple_simulations(params, initial_population, end_time=100.0, num_simulations=10)
+    # all_stats = run_multiple_simulations(params, initial_population, end_time=350.0, num_simulations=10)
 
-    # Calculate confidence intervals
-    ci_data = calculate_confidence_intervals(all_stats)
+    # # Calculate confidence intervals
+    # ci_data = calculate_confidence_intervals(all_stats)
 
-    # Plot just the confidence intervals
-    plot_confidence_intervals(ci_data)
+    # # Plot just the confidence intervals
+    # plot_confidence_intervals(ci_data)
 
-    # Or plot all trajectories with confidence intervals
-    plot_all_simulations(all_stats, ci_data)
+    # # Or plot all trajectories with confidence intervals
+    # plot_all_simulations(all_stats, ci_data)
