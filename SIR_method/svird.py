@@ -210,6 +210,41 @@ class SVIRDModel:
 
         return True
     
+    def calculate_spatial_diffusion(self, state):
+        """
+        Calculate spatial diffusion terms for all compartments
+        
+        Parameters:
+        state: current state vector
+        
+        Returns:
+        diffusion_terms: dictionary with diffusion terms for each compartment
+        """
+        diffusion_terms = {
+            'S': np.zeros((self.n_regions, self.n_risk_groups)),
+            'V': np.zeros((self.n_regions, self.n_risk_groups)),
+            'I': np.zeros((self.n_regions, self.n_risk_groups)),
+            'R': np.zeros((self.n_regions, self.n_risk_groups))
+        }
+
+        for comp in ['S','V','I','R']:
+            X = self.get_compartment(state, comp)
+            d = self.params['diffusion'][comp]
+
+            # TODO: make this code more efficent its just too bad right now
+            for i in range(self.n_regions):
+                for r in range(self.n_risk_groups):
+                    # Sum up contributions from all connected regions
+                    diffusion = 0
+                    for j in range(self.n_regions):
+                        if i != j:  # Skip self-connection
+                            # Flow from j to i minus flow from i to j
+                            diffusion += d * self.params['connectivity'][i,j] * (X[j,r] - X[i,r])
+                    
+                    diffusion_terms[comp][i,r] = diffusion
+        return diffusion_terms
+
+    
     def test_foi_calculation(self):
         """
         Test the force of infection calculation with a simple scenario
@@ -280,8 +315,95 @@ class SVIRDModel:
         
         plt.show()
 
+    def test_spatial_diffusion(self):
+        """
+        Test spatial diffusion calculations with a simple scenario
+        """
+        # Set up test parameters
+        self.params.update({
+            'diffusion': {
+                'S': 0.1,  # Diffusion coefficient for susceptible
+                'V': 0.05, # Lower diffusion for vaccinated
+                'I': 0.01, # Very low diffusion for infected
+                'R': 0.1   # Same as susceptible
+            },
+            # Example connectivity matrix (symmetric)
+            'connectivity': np.array([
+                [0, 1, 0.5, 0],    # Region 0 connected to 1 and 2
+                [1, 0, 1, 0.5],    # Region 1 connected to 0, 2, and 3
+                [0.5, 1, 0, 1],    # Region 2 connected to 0, 1, and 3
+                [0, 0.5, 1, 0]     # Region 3 connected to 1 and 2
+            ])
+        })
+        
+        # Create test initial conditions with population gradient
+        initial_conditions = {
+            'S': np.array([
+                [1000, 800, 600, 400],    # Region 0 - highest population
+                [800, 600, 400, 200],     # Region 1
+                [600, 400, 200, 100],     # Region 2
+                [400, 200, 100, 50]       # Region 3 - lowest population
+            ]),
+            'I': np.zeros((4, 4)),
+            'V': np.zeros((4, 4)),
+            'R': np.zeros((4, 4)),
+            'D': np.zeros((4, 4))
+        }
+        
+        # Initialize state
+        state = self.initialize_state(initial_conditions)
+        
+        # Calculate diffusion terms
+        diffusion_terms = self.calculate_spatial_diffusion(state)
+        
+        # Print results
+        print("\nSpatial Diffusion Test Results:")
+        print("-" * 50)
+        print("\nDiffusion coefficients:")
+        for comp, d in self.params['diffusion'].items():
+            print(f"{comp}: {d}")
+        
+        print("\nConnectivity matrix:")
+        print(self.params['connectivity'])
+        
+        print("\nInitial susceptible population:")
+        print(self.get_compartment(state, 'S'))
+        
+        print("\nDiffusion terms for susceptible population:")
+        print(diffusion_terms['S'])
+        
+        # Verify conservation
+        for comp in ['S', 'V', 'I', 'R']:
+            total_flow = np.sum(diffusion_terms[comp])
+            print(f"\nTotal flow for {comp}: {total_flow:.2e}")
+            assert np.abs(total_flow) < 1e-10, f"Conservation violated for {comp}"
+        
+        return diffusion_terms
+
+    def plot_diffusion_terms(self, diffusion_terms):
+        """
+        Visualize spatial diffusion terms for all compartments
+        """
+        fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+        compartments = ['S', 'V', 'I', 'R']
+        
+        for idx, (comp, ax) in enumerate(zip(compartments, axes.flat)):
+            im = ax.imshow(diffusion_terms[comp], cmap='RdBu', aspect='auto')
+            plt.colorbar(im, ax=ax, label='Net Flow')
+            
+            ax.set_title(f'Diffusion Terms - {comp} Compartment')
+            ax.set_xlabel('Risk Group')
+            ax.set_ylabel('Region')
+            ax.set_xticks(range(self.n_risk_groups))
+            ax.set_yticks(range(self.n_regions))
+            ax.set_xticklabels([f'Group {i}' for i in range(self.n_risk_groups)])
+            ax.set_yticklabels([f'Region {i}' for i in range(self.n_regions)])
+            
+        plt.tight_layout()
+        plt.show()
+
 # Test the implementation
 if __name__ == "__main__":
     model = SVIRDModel()
-    foi = model.test_foi_calculation()
-    model.plot_foi(foi)
+    diffusion_terms = model.test_spatial_diffusion()
+    model.plot_diffusion_terms(diffusion_terms)
