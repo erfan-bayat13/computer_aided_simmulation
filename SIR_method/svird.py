@@ -1,6 +1,8 @@
 # this the svid model 
 from matplotlib import pyplot as plt
 import numpy as np
+from scipy.integrate import odeint
+
 
 
 def svird(sate, t, params):
@@ -243,8 +245,102 @@ class SVIRDModel:
                     
                     diffusion_terms[comp][i,r] = diffusion
         return diffusion_terms
-
     
+    def calculate_derivatives(self, state, t):
+        """
+        Calculate the derivatives for the SVIRD system
+        
+        Parameters:
+        state: current state vector
+        t: current time
+        
+        Returns:
+        derivatives: state vector of same shape as input with computed derivatives
+        """
+        # Initialize derivative vector
+        derivatives = np.zeros_like(state)
+        
+        # Get current values for each compartment
+        S = self.get_compartment(state, 'S')
+        V = self.get_compartment(state, 'V')
+        I = self.get_compartment(state, 'I')
+        R = self.get_compartment(state, 'R')
+        
+        # Calculate intermediate terms
+        foi = self.calculate_foi(state)
+        v_rates = self.calculate_vaccination_rates(state)
+        diffusion = self.calculate_spatial_diffusion(state)
+
+        for i in range(self.n_regions):
+            for r in range(self.n_risk_groups):
+                s_idx = self.get_index('S', i, r)
+                v_idx = self.get_index('V', i, r)
+                i_idx = self.get_index('I', i, r)
+                r_idx = self.get_index('R', i, r)
+                d_idx = self.get_index('D', i, r)
+
+                derivatives[s_idx] = (
+                    -foi[i,r] * S[i,r]
+                    - v_rates[i,r]
+                    + self.params['omega'] * V[i,r]
+                    + diffusion['S'][i,r]
+                )
+
+                # Vaccinated compartment
+                derivatives[v_idx] = (
+                    v_rates[i,r]                                    # Vaccination
+                    - (1 - self.params['eta']) * foi[i,r] * V[i,r] # Breakthrough infections
+                    - self.params['omega'] * V[i,r]                 # Waning immunity
+                    + diffusion['V'][i,r]                          # Spatial diffusion
+                )
+
+
+                # Infected compartment
+                derivatives[i_idx] = (
+                    foi[i,r] * S[i,r]                              # Infection of susceptible
+                    + (1 - self.params['eta']) * foi[i,r] * V[i,r] # Breakthrough infections
+                    - self.params['gamma'][r] * I[i,r]             # Recovery
+                    - self.params['mu'][r] * I[i,r]                # Deaths
+                    + diffusion['I'][i,r]                          # Spatial diffusion
+                )
+                
+                # Recovered compartment
+                derivatives[r_idx] = (
+                    self.params['gamma'][r] * I[i,r]  # Recovery
+                    + diffusion['R'][i,r]             # Spatial diffusion
+                )
+                
+                # Deaths compartment
+                derivatives[d_idx] = (
+                    self.params['mu'][r] * I[i,r]     # Deaths
+                )
+        
+        return derivatives
+    
+    def solve(self, initial_conditions, t_span, t_eval=None):
+        """
+        Solve the SVIRD system over the specified time period
+        
+        Parameters:
+        initial_conditions: dictionary with initial values for each compartment
+        t_span: (t_start, t_end) tuple
+        t_eval: optional array of evaluation times
+        
+        Returns:
+        t: time points
+        solution: array with solution values
+        """
+        y0 = self.initialize_state(initial_conditions=initial_conditions)
+
+        solution = odeint(self.calculate_derivatives,
+                          y0,
+                          t_eval if t_eval is not None else np.linspace(*t_span, 100),
+                          rtol=1e-8,
+                          atol=1e-8
+                        )
+        return t_eval if t_eval is not None else np.linspace(*t_span, 100), solution
+    
+
     def test_foi_calculation(self):
         """
         Test the force of infection calculation with a simple scenario
@@ -379,6 +475,51 @@ class SVIRDModel:
             assert np.abs(total_flow) < 1e-10, f"Conservation violated for {comp}"
         
         return diffusion_terms
+    
+    def test_simulation(self, t_max=100):
+        """
+        Run a test simulation with reasonable parameters
+        """
+        # Set up parameters
+        self.params.update({
+            'beta': np.array([0.3, 0.4, 0.5, 0.6]),  # Transmission rates
+            'gamma': np.array([0.1, 0.1, 0.1, 0.1]), # Recovery rates
+            'mu': np.array([0.01, 0.02, 0.03, 0.04]), # Mortality rates
+            'nu': 50.0,  # Vaccination capacity
+            'eta': 0.9,  # Vaccine efficacy
+            'omega': 0.01, # Waning immunity rate
+            'alpha': np.array([1.0, 2.0, 3.0, 4.0]),  # Vaccination priorities
+            'diffusion': {
+                'S': 0.1,
+                'V': 0.05,
+                'I': 0.01,
+                'R': 0.1
+            },
+            'connectivity': np.array([
+                [0, 1, 0.5, 0],
+                [1, 0, 1, 0.5],
+                [0.5, 1, 0, 1],
+                [0, 0.5, 1, 0]
+            ])
+        })
+        
+        # Initial conditions
+        initial_conditions = {
+            'S': np.ones((4, 4)) * 1000,  # 1000 susceptible in each group
+            'I': np.zeros((4, 4)),
+            'V': np.zeros((4, 4)),
+            'R': np.zeros((4, 4)),
+            'D': np.zeros((4, 4))
+        }
+        
+        # Add initial infections
+        initial_conditions['I'][0,0] = 100  # Start with 100 infected in region 0, risk group 0
+        
+        # Solve system
+        t = np.linspace(0, t_max, 1000)
+        t, solution = self.solve(initial_conditions, (0, t_max), t)
+        
+        return t, solution
 
     def plot_diffusion_terms(self, diffusion_terms):
         """
@@ -402,8 +543,282 @@ class SVIRDModel:
         plt.tight_layout()
         plt.show()
 
+    def plot_simulation(self, t, solution):
+        """
+        Plot the results of a simulation
+        """
+        compartments = ['S', 'V', 'I', 'R', 'D']
+        fig, axes = plt.subplots(len(compartments), 1, figsize=(12, 15))
+        
+        for idx, comp in enumerate(compartments):
+            ax = axes[idx]
+            
+            for i in range(self.n_regions):
+                for r in range(self.n_risk_groups):
+                    state_idx = self.get_index(comp, i, r)
+                    ax.plot(t, solution[:, state_idx], 
+                           label=f'Region {i}, Risk {r}',
+                           alpha=0.7)
+            
+            ax.set_title(f'{comp} Compartment')
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Population')
+            ax.grid(True)
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        
+        plt.tight_layout()
+        plt.show()
+    
+    def plot_region_comparison(self, t, solution):
+        """
+        Plot comparison of total cases across regions
+        """
+        plt.figure(figsize=(12, 8))
+        
+        for i in range(self.n_regions):
+            # Sum up infected across risk groups for each region
+            total_infected = sum(
+                solution[:, self.get_index('I', i, r)]
+                for r in range(self.n_risk_groups)
+            )
+            plt.plot(t, total_infected, label=f'Region {i}', linewidth=2)
+        
+        plt.title('Total Infected Cases by Region')
+        plt.xlabel('Time')
+        plt.ylabel('Number of Infected')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    def plot_risk_group_comparison(self, t, solution):
+        """
+        Plot comparison of cases across risk groups
+        """
+        plt.figure(figsize=(12, 8))
+        
+        for r in range(self.n_risk_groups):
+            # Sum up infected across regions for each risk group
+            total_infected = sum(
+                solution[:, self.get_index('I', i, r)]
+                for i in range(self.n_regions)
+            )
+            plt.plot(t, total_infected, label=f'Risk Group {r}', linewidth=2)
+        
+        plt.title('Total Infected Cases by Risk Group')
+        plt.xlabel('Time')
+        plt.ylabel('Number of Infected')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    def plot_vaccination_progress(self, t, solution):
+        """
+        Plot vaccination progress over time
+        """
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Plot total vaccinated population
+        for i in range(self.n_regions):
+            total_vaccinated = sum(
+                solution[:, self.get_index('V', i, r)]
+                for r in range(self.n_risk_groups)
+            )
+            ax1.plot(t, total_vaccinated, label=f'Region {i}')
+        
+        ax1.set_title('Vaccination Progress by Region')
+        ax1.set_xlabel('Time')
+        ax1.set_ylabel('Number of Vaccinated Individuals')
+        ax1.legend()
+        ax1.grid(True)
+        
+        # Plot vaccination by risk group
+        for r in range(self.n_risk_groups):
+            total_vaccinated = sum(
+                solution[:, self.get_index('V', i, r)]
+                for i in range(self.n_regions)
+            )
+            ax2.plot(t, total_vaccinated, label=f'Risk Group {r}')
+        
+        ax2.set_title('Vaccination Progress by Risk Group')
+        ax2.set_xlabel('Time')
+        ax2.set_ylabel('Number of Vaccinated Individuals')
+        ax2.legend()
+        ax2.grid(True)
+        
+        plt.tight_layout()
+        plt.show()
+
+    def plot_mortality_analysis(self, t, solution):
+        """
+        Plot mortality rates and cumulative deaths
+        """
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Plot deaths over time by region
+        for i in range(self.n_regions):
+            total_deaths = sum(
+                solution[:, self.get_index('D', i, r)]
+                for r in range(self.n_risk_groups)
+            )
+            ax1.plot(t, total_deaths, label=f'Region {i}')
+        
+        ax1.set_title('Cumulative Deaths by Region')
+        ax1.set_xlabel('Time')
+        ax1.set_ylabel('Number of Deaths')
+        ax1.legend()
+        ax1.grid(True)
+        
+        # Plot deaths by risk group
+        for r in range(self.n_risk_groups):
+            total_deaths = sum(
+                solution[:, self.get_index('D', i, r)]
+                for i in range(self.n_regions)
+            )
+            ax2.plot(t, total_deaths, label=f'Risk Group {r}')
+        
+        ax2.set_title('Cumulative Deaths by Risk Group')
+        ax2.set_xlabel('Time')
+        ax2.set_ylabel('Number of Deaths')
+        ax2.legend()
+        ax2.grid(True)
+        
+        plt.tight_layout()
+        plt.show()
+
+    def plot_spatial_heatmap(self, t, solution, time_points=None):
+        """
+        Plot heatmap of infected cases across regions at different time points
+        """
+        if time_points is None:
+            time_points = [0, len(t)//4, len(t)//2, 3*len(t)//4, -1]
+        
+        fig, axes = plt.subplots(1, len(time_points), figsize=(20, 4))
+        
+        for idx, t_idx in enumerate(time_points):
+            data = np.zeros((self.n_regions, self.n_risk_groups))
+            for i in range(self.n_regions):
+                for r in range(self.n_risk_groups):
+                    data[i, r] = solution[t_idx, self.get_index('I', i, r)]
+            
+            im = axes[idx].imshow(data, cmap='YlOrRd')
+            axes[idx].set_title(f'Time = {t[t_idx]:.1f}')
+            axes[idx].set_xlabel('Risk Group')
+            axes[idx].set_ylabel('Region')
+            plt.colorbar(im, ax=axes[idx])
+        
+        plt.suptitle('Spatial Distribution of Infected Cases Over Time')
+        plt.tight_layout()
+        plt.show()
+
+    def plot_peak_timing_analysis(self, t, solution):
+        """
+        Plot analysis of epidemic peak timing across regions and risk groups
+        """
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Peak timing by region
+        peak_times_region = []
+        peak_values_region = []
+        for i in range(self.n_regions):
+            total_infected = sum(solution[:, self.get_index('I', i, r)]
+                               for r in range(self.n_risk_groups))
+            peak_idx = np.argmax(total_infected)
+            peak_times_region.append(t[peak_idx])
+            peak_values_region.append(total_infected[peak_idx])
+        
+        ax1.bar(range(self.n_regions), peak_times_region)
+        ax1.set_title('Peak Timing by Region')
+        ax1.set_xlabel('Region')
+        ax1.set_ylabel('Time to Peak')
+        
+        # Peak timing by risk group
+        peak_times_risk = []
+        peak_values_risk = []
+        for r in range(self.n_risk_groups):
+            total_infected = sum(solution[:, self.get_index('I', i, r)]
+                               for i in range(self.n_regions))
+            peak_idx = np.argmax(total_infected)
+            peak_times_risk.append(t[peak_idx])
+            peak_values_risk.append(total_infected[peak_idx])
+        
+        ax2.bar(range(self.n_risk_groups), peak_times_risk)
+        ax2.set_title('Peak Timing by Risk Group')
+        ax2.set_xlabel('Risk Group')
+        ax2.set_ylabel('Time to Peak')
+        
+        plt.tight_layout()
+        plt.show()
+
+    def plot_all_compartments_combined(self, t, solution):
+        """
+        Plot all SVIRD compartments on a single figure with both total populations
+        and stacked area plot
+        """
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 12))
+        
+        # Colors for each compartment
+        colors = {
+            'S': 'blue',
+            'V': 'green',
+            'I': 'red',
+            'R': 'purple',
+            'D': 'black'
+        }
+        
+        # Calculate totals for each compartment
+        totals = {}
+        for comp in ['S', 'V', 'I', 'R', 'D']:
+            totals[comp] = np.sum([
+                [solution[:, self.get_index(comp, i, r)]
+                 for r in range(self.n_risk_groups)]
+                for i in range(self.n_regions)
+            ], axis=(0, 1))
+        
+        # Line plot
+        for comp, color in colors.items():
+            ax1.plot(t, totals[comp], label=comp, color=color, linewidth=2)
+        
+        ax1.set_title('Total Population in Each Compartment')
+        ax1.set_xlabel('Time')
+        ax1.set_ylabel('Population')
+        ax1.legend()
+        ax1.grid(True)
+        
+        # Stacked area plot
+        compartments = ['S', 'V', 'I', 'R', 'D']
+        data = [totals[comp] for comp in compartments]
+        
+        ax2.stackplot(t, data, labels=compartments, colors=[colors[comp] for comp in compartments],
+                     alpha=0.7)
+        
+        ax2.set_title('Stacked Population Distribution')
+        ax2.set_xlabel('Time')
+        ax2.set_ylabel('Population')
+        ax2.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        ax2.grid(True)
+        
+        # Add total population line to verify conservation
+        total_population = sum(data)
+        ax2.plot(t, total_population, '--', color='gray', label='Total Population',
+                linewidth=1, alpha=0.8)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print some summary statistics
+        print("\nSummary Statistics:")
+        print("-" * 50)
+        for comp in compartments:
+            print(f"\n{comp} Compartment:")
+            print(f"  Peak: {np.max(totals[comp]):.0f}")
+            print(f"  Final value: {totals[comp][-1]:.0f}")
+        print("\nPopulation Conservation Check:")
+        print(f"  Initial total: {total_population[0]:.0f}")
+        print(f"  Final total: {total_population[-1]:.0f}")
+    
+
 # Test the implementation
 if __name__ == "__main__":
     model = SVIRDModel()
-    diffusion_terms = model.test_spatial_diffusion()
-    model.plot_diffusion_terms(diffusion_terms)
+    t, solution = model.test_simulation()
+    model.plot_simulation(t, solution)
