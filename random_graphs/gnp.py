@@ -36,23 +36,26 @@ results_log = []
 for n in n_values:
     for a in a_values:
         p = a * np.log(n)/n
-        results_log.extend(analyze_graph_components(n, p, iterations))
+        # Store the original 'a' value for plotting
+        results_extend = analyze_graph_components(n, p, iterations)
+        for r in results_extend:
+            r['a'] = a  # Store the original 'a' value
+        results_log.extend(results_extend)
 
 # Convert to DataFrames
 df_linear = pd.DataFrame(results_linear)
 df_log = pd.DataFrame(results_log)
 
-# Plotting function
-def create_component_size_plots(df, title_prefix):
+# Plotting function for linear case
+def create_linear_component_plots(df, title_prefix):
     plt.figure(figsize=(15, 6))
     
     # Plot for largest component
     plt.subplot(1, 2, 1)
     for n in n_values:
         data = df[df['n'] == n]
-        p_values = data['p'].unique()
         mean_sizes = data.groupby('p')['largest_component'].mean()
-        plt.plot(p_values * n, mean_sizes, 'o-', label=f'n={n}')
+        plt.plot(mean_sizes.index * n, mean_sizes.values, 'o-', label=f'n={n}')
     
     plt.xlabel('a')
     plt.ylabel('Normalized size of largest component')
@@ -64,9 +67,8 @@ def create_component_size_plots(df, title_prefix):
     plt.subplot(1, 2, 2)
     for n in n_values:
         data = df[df['n'] == n]
-        p_values = data['p'].unique()
         mean_sizes = data.groupby('p')['second_largest_component'].mean()
-        plt.plot(p_values * n, mean_sizes, 'o-', label=f'n={n}')
+        plt.plot(mean_sizes.index * n, mean_sizes.values, 'o-', label=f'n={n}')
     
     plt.xlabel('a')
     plt.ylabel('Normalized size of second largest component')
@@ -77,6 +79,39 @@ def create_component_size_plots(df, title_prefix):
     plt.tight_layout()
     return plt
 
+# Modified plotting function for logarithmic case
+def create_log_component_plots(df, title_prefix):
+    plt.figure(figsize=(15, 6))
+    
+    # Plot for largest component
+    plt.subplot(1, 2, 1)
+    for n in n_values:
+        data = df[df['n'] == n]
+        mean_sizes = data.groupby('a')['largest_component'].mean()
+        plt.plot(mean_sizes.index, mean_sizes.values, 'o-', label=f'n={n}')
+    
+    plt.xlabel('a (where p = a*log(n)/n)')
+    plt.ylabel('Normalized size of largest component')
+    plt.title(f'{title_prefix}\nLargest Component Size')
+    plt.legend()
+    plt.grid(True)
+    
+    # Plot for second largest component
+    plt.subplot(1, 2, 2)
+    for n in n_values:
+        data = df[df['n'] == n]
+        mean_sizes = data.groupby('a')['second_largest_component'].mean()
+        plt.plot(mean_sizes.index, mean_sizes.values, 'o-', label=f'n={n}')
+    
+    plt.xlabel('a (where p = a*log(n)/n)')
+    plt.ylabel('Normalized size of second largest component')
+    plt.title(f'{title_prefix}\nSecond Largest Component Size')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    return plt
+
 # Create plots
-fig1 = create_component_size_plots(df_linear, 'Linear Case (p = a/n)')
-fig2 = create_component_size_plots(df_log, 'Logarithmic Case (p = a*log(n)/n)')
+fig1 = create_linear_component_plots(df_linear, 'Linear Case (p = a/n)')
+fig2 = create_log_component_plots(df_log, 'Logarithmic Case (p = a*log(n)/n)')
